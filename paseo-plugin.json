@@ -2,6 +2,11 @@
   "id": "git-workspace",
   "name": "Git workspace",
   "description": "Search, clone, and create Paseo workspaces from GitHub and GitLab repositories",
+  "icon": "assets/icon.png",
+  "media": [
+    "assets/git-workspace-surface.png",
+    "assets/git-workspace-settings.png"
+  ],
   "requirements": {
     "paseo": ">=0.8.0"
   },
