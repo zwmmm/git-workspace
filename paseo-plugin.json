@@ -1,0 +1,9 @@
+{
+  "id": "git-workspace",
+  "name": "Git workspace",
+  "description": "Search, clone, and create Paseo workspaces from GitHub and GitLab repositories",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  },
+  "build": [["npm", "install", "--no-fund", "--no-audit"]]
+}
