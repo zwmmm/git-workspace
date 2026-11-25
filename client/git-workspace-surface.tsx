@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
+  Platform,
   StyleSheet,
   Switch,
   Text,
@@ -82,6 +83,7 @@ export function GitWorkspaceSurface({
     browseFolders = useRpc(BrowseFoldersRpc),
     importFolder = useRpc(ImportFolderRpc),
     checkAuth = useRpc(CheckAuthRpc);
+  const [focusedInput, setFocusedInput] = useState<string>();
   const [width, setWidth] = useState(layout.compact ? 400 : 1000);
   const compact = width < 680;
   const [provider, setProvider] = useState<"all" | Provider>("all");
@@ -152,6 +154,7 @@ export function GitWorkspaceSurface({
     authRequest.current++;
     quickOperations.current.clear();
     setFormAuth({});
+    setFocusedInput(undefined);
     setAuthRefreshing(false);
     setForm(null);
     setBusy(null);
@@ -248,6 +251,7 @@ export function GitWorkspaceSurface({
   const openForm = (next: Form) => {
     if (lock.current || !settings) return;
     formOperation.current = newOperationId();
+    setFocusedInput(undefined);
     authRequest.current++;
     setForm(next);
     setFormError("");
@@ -455,31 +459,61 @@ export function GitWorkspaceSurface({
           flexWrap: "wrap",
         },
         button: {
-          minHeight: compact ? 40 : 36,
+          minHeight: 32,
           paddingHorizontal: 12,
-          borderRadius: 8,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: "transparent",
           backgroundColor: theme.colors.surface2,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 6,
+          gap: 8,
         },
+        buttonXs: { minHeight: 28 },
+        buttonIcon: { width: 32, paddingHorizontal: 0 },
+        buttonIconXs: { width: 28 },
         ghost: { backgroundColor: "transparent" },
-        primary: { backgroundColor: theme.colors.accent },
-        buttonText: { color: theme.colors.foreground, fontSize: 13 },
+        primary: {
+          backgroundColor: theme.colors.accent,
+          borderColor: theme.colors.accent,
+        },
+        buttonText: {
+          color: theme.colors.foreground,
+          fontSize: 14,
+          fontWeight: "normal",
+        },
+        buttonTextXs: { fontSize: 12 },
+        ghostText: { color: theme.colors.foregroundMuted },
         primaryText: { color: theme.colors.accentForeground },
         muted: { color: theme.colors.foregroundMuted, fontSize: 12 },
         input: {
           flex: 1,
           minWidth: 0,
-          minHeight: 40,
+          minHeight: 32,
           paddingHorizontal: 12,
+          paddingVertical: 5,
           color: theme.colors.foreground,
-          backgroundColor: theme.colors.surface1,
+          backgroundColor: theme.colors.surface2,
           borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: 8,
+          borderColor: "transparent",
+          borderRadius: 6,
           fontSize: 14,
+          lineHeight: 20,
+          includeFontPadding: false,
+          ...(Platform.OS === "web" ? { outlineWidth: 0 } : {}),
+        },
+        inputDisabled: { opacity: 0.5 },
+        inputFocused: {
+          borderColor: theme.colors.border,
+          ...(Platform.OS === "web"
+            ? {
+                outlineColor: theme.colors.accent,
+                outlineWidth: 2,
+                outlineOffset: 1,
+                outlineStyle: "solid" as const,
+              }
+            : {}),
         },
         search: { flexDirection: "row", alignItems: "center", gap: 8 },
         filters: {
@@ -535,7 +569,7 @@ export function GitWorkspaceSurface({
         },
         empty: { padding: 32, alignItems: "center", gap: 12 },
         field: { gap: 8 },
-        label: { color: theme.colors.foreground, fontSize: 13 },
+        label: { color: theme.colors.foregroundMuted, fontSize: 14 },
         form: { gap: 20 },
         separator: { height: 1, backgroundColor: theme.colors.border },
         folder: {
@@ -553,6 +587,7 @@ export function GitWorkspaceSurface({
     onPress: () => unknown,
     options: {
       icon?: string;
+      size?: "xs" | "sm";
       primary?: boolean;
       disabled?: boolean;
       accessibilityLabel?: string;
@@ -567,25 +602,35 @@ export function GitWorkspaceSurface({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        options.size === "xs" && styles.buttonXs,
+        !label && styles.buttonIcon,
+        !label && options.size === "xs" && styles.buttonIconXs,
         options.primary && styles.primary,
         options.ghost && styles.ghost,
-        { opacity: options.disabled ? 0.4 : pressed ? 0.75 : 1 },
+        { opacity: options.disabled ? 0.5 : pressed ? 0.85 : 1 },
       ]}
     >
       {options.icon ? (
         <Icon
           name={options.icon}
-          size={16}
+          size={options.size === "xs" ? 12 : 14}
           color={
             options.primary
               ? theme.colors.accentForeground
-              : theme.colors.foregroundMuted
+              : options.ghost
+              ? theme.colors.foregroundMuted
+              : theme.colors.foreground
           }
         />
       ) : null}
       {label ? (
         <Text
-          style={[styles.buttonText, options.primary && styles.primaryText]}
+          style={[
+            styles.buttonText,
+            options.size === "xs" && styles.buttonTextXs,
+            options.ghost && styles.ghostText,
+            options.primary && styles.primaryText,
+          ]}
         >
           {label}
         </Text>
@@ -652,7 +697,16 @@ export function GitWorkspaceSurface({
             accessibilityLabel="搜索仓库"
             placeholder="搜索仓库名称或描述"
             placeholderTextColor={theme.colors.foregroundMuted}
-            style={styles.input}
+            style={[
+              styles.input,
+              focusedInput === "search" && styles.inputFocused,
+            ]}
+            onFocus={() => setFocusedInput("search")}
+            onBlur={() =>
+              setFocusedInput((current) =>
+                current === "search" ? undefined : current
+              )
+            }
             value={search}
             onChangeText={(value) => {
               if (search !== value) {
@@ -680,7 +734,7 @@ export function GitWorkspaceSurface({
                       setProvider(value);
                     }
                   },
-                  { ghost: provider !== value }
+                  { ghost: provider !== value, size: "xs" }
                 )}
               </View>
             ))}
@@ -699,7 +753,7 @@ export function GitWorkspaceSurface({
                   ? "remote"
                   : "all"
               ),
-            { icon: "ListFilter", ghost: true }
+            { icon: "ListFilter", ghost: true, size: "xs" }
           )}
         </View>
         {loadError ? (
@@ -766,6 +820,7 @@ export function GitWorkspaceSurface({
                     : "克隆并创建",
                   () => quickCreate(repo),
                   {
+                    size: "xs",
                     icon: compact ? "ArrowRight" : undefined,
                     disabled: !!busy || !settings,
                     accessibilityLabel: `${
@@ -774,6 +829,7 @@ export function GitWorkspaceSurface({
                   }
                 )}
                 {button("", () => openForm({ kind: "options", repo }), {
+                  size: "xs",
                   icon: "Ellipsis",
                   ghost: true,
                   disabled: !!busy || !settings,
@@ -845,7 +901,19 @@ export function GitWorkspaceSurface({
                   <Text style={styles.label}>仓库名称</Text>
                   <TextInput
                     accessibilityLabel="仓库名称"
-                    style={[styles.input, { flex: 0 }]}
+                    style={[
+                      styles.input,
+                      { flex: 0 },
+                      (!!busy || (!!remoteRepo && !uncertain)) &&
+                        styles.inputDisabled,
+                      focusedInput === "name" && styles.inputFocused,
+                    ]}
+                    onFocus={() => setFocusedInput("name")}
+                    onBlur={() =>
+                      setFocusedInput((current) =>
+                        current === "name" ? undefined : current
+                      )
+                    }
                     value={name}
                     onChangeText={(value) => {
                       setName(value);
@@ -901,7 +969,17 @@ export function GitWorkspaceSurface({
                       accessibilityLabel="文件夹路径"
                       placeholder="选择或输入文件夹路径"
                       placeholderTextColor={theme.colors.foregroundMuted}
-                      style={styles.input}
+                      style={[
+                        styles.input,
+                        !!busy && styles.inputDisabled,
+                        focusedInput === "folder" && styles.inputFocused,
+                      ]}
+                      onFocus={() => setFocusedInput("folder")}
+                      onBlur={() =>
+                        setFocusedInput((current) =>
+                          current === "folder" ? undefined : current
+                        )
+                      }
                       value={folderPath}
                       onChangeText={setFolderPath}
                       editable={!busy}
