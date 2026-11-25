@@ -189,8 +189,7 @@ export async function fetchGitHubRepos(
 
     return results;
   } catch (err: unknown) {
-    console.error("fetchGitHubRepos error:", err);
-    return [];
+    throw new Error(`加载 GitHub 仓库失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -253,8 +252,7 @@ export async function fetchGitLabRepos(
 
     return results;
   } catch (err: unknown) {
-    console.error("fetchGitLabRepos error:", err);
-    return [];
+    throw new Error(`加载 GitLab 仓库失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -272,6 +270,10 @@ export async function cloneAndCreateWorkspace(
 ): Promise<{ workspaceId: string; title: string; localPath: string }> {
   const cloneBaseDir = resolveCloneDir(params.cloneDir);
   const host = params.provider === "github" ? "github.com" : parseGitLabHost(params.gitlabUrl);
+  const parts = params.repoFullName.split("/");
+  if (parts.length < 2 || parts.some(part => !part || part === "." || part === ".." || part.includes("\\")) || host === "." || host === "..") {
+    throw new Error("无效的仓库路径");
+  }
   const targetPath = path.join(cloneBaseDir, host, params.repoFullName);
 
   const isLocal = await isGitRepoLocally(targetPath);
@@ -280,7 +282,7 @@ export async function cloneAndCreateWorkspace(
   if (!isLocal) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     console.log(`[git-workspace] Cloning ${params.cloneUrl} into ${targetPath}...`);
-    await exec("git", ["clone", params.cloneUrl, targetPath]);
+    await exec("git", ["clone", "--", params.cloneUrl, targetPath]);
     console.log(`[git-workspace] Clone completed for ${params.repoFullName}`);
   }
 
