@@ -46,6 +46,8 @@ type FolderList = {
   parent: string;
   directories: { name: string; path: string }[];
 };
+const newOperationId = () =>
+  `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -96,6 +98,14 @@ export function GitWorkspaceSurface({
     github?: AuthStatus;
     gitlab?: AuthStatus;
   }>({});
+  const [formAuth, setFormAuth] = useState<{
+    github?: AuthStatus;
+    gitlab?: AuthStatus;
+  }>({});
+  const [authRefreshing, setAuthRefreshing] = useState(false);
+  const authRequest = useRef(0),
+    formOperation = useRef(""),
+    quickOperations = useRef(new Map<string, string>());
   const [loadError, setLoadError] = useState("");
   const [rowError, setRowError] = useState<{ id: string; text: string }>();
   const [form, setForm] = useState<Form | null>(null),
@@ -115,7 +125,11 @@ export function GitWorkspaceSurface({
     syncLock = useRef(false),
     request = useRef(0),
     folderRequest = useRef(0);
-  const context = `${host.id}:${gitlabUrl}:${cloneDir}:${protocol}:${isolation}`;
+  const configKey = `${host.id}:${gitlabUrl}:${cloneDir}:${protocol}:${isolation}`;
+  const revision = useRef({ key: configKey, value: 0 });
+  if (revision.current.key !== configKey)
+    revision.current = { key: configKey, value: revision.current.value + 1 };
+  const context = `${configKey}#${revision.current.value}`;
   const currentContext = useRef(context),
     alive = useRef(true);
   currentContext.current = context;
@@ -135,6 +149,10 @@ export function GitWorkspaceSurface({
     syncLock.current = false;
     request.current++;
     folderRequest.current++;
+    authRequest.current++;
+    quickOperations.current.clear();
+    setFormAuth({});
+    setAuthRefreshing(false);
     setForm(null);
     setBusy(null);
     setRepos([]);
@@ -175,6 +193,8 @@ export function GitWorkspaceSurface({
     context,
     Boolean(settings),
   ]);
+  const latestLoad = useRef(load);
+  latestLoad.current = load;
   useEffect(() => {
     void load();
     return () => {
@@ -196,7 +216,7 @@ export function GitWorkspaceSurface({
     const key = context;
     try {
       await sync({});
-      if (isCurrent(key)) await load();
+      if (isCurrent(key)) await latestLoad.current();
     } catch (error) {
       if (isCurrent(key)) setLoadError(errorText(error));
     } finally {
@@ -206,8 +226,29 @@ export function GitWorkspaceSurface({
       }
     }
   };
+  const refreshFormAuth = () => {
+    const key = context,
+      id = ++authRequest.current;
+    setAuthRefreshing(true);
+    setFormAuth({});
+    setFormError("");
+    void checkAuth({ forceRefresh: true })
+      .then((result) => {
+        if (isCurrent(key) && id === authRequest.current) setFormAuth(result);
+      })
+      .catch((error) => {
+        if (isCurrent(key) && id === authRequest.current)
+          setFormError(errorText(error));
+      })
+      .finally(() => {
+        if (isCurrent(key) && id === authRequest.current)
+          setAuthRefreshing(false);
+      });
+  };
   const openForm = (next: Form) => {
     if (lock.current || !settings) return;
+    formOperation.current = newOperationId();
+    authRequest.current++;
     setForm(next);
     setFormError("");
     setName("");
@@ -227,23 +268,17 @@ export function GitWorkspaceSurface({
         ? "gitlab"
         : "github"
     );
-    if (next.kind === "new") {
-      const key = context;
-      void checkAuth({ forceRefresh: true })
-        .then((result) => {
-          if (isCurrent(key)) setAuth(result);
-        })
-        .catch((error) => {
-          if (isCurrent(key)) setFormError(errorText(error));
-        });
-    }
+    if (next.kind === "new") refreshFormAuth();
   };
+
   const createFromRepo = (
     repo: RepoItem,
     mode = isolation,
-    cloneProtocol = protocol
+    cloneProtocol = protocol,
+    operationId = quickOperations.current.get(repo.id) || newOperationId()
   ) =>
     createWorkspace({
+      operationId,
       provider: repo.provider,
       repoFullName: repo.fullName,
       cloneUrl: cloneProtocol === "ssh" ? repo.sshUrl : repo.httpUrl,
@@ -277,10 +312,15 @@ export function GitWorkspaceSurface({
     lock.current = true;
     setBusy(repo.id);
     setRowError(undefined);
+    if (!quickOperations.current.has(repo.id))
+      quickOperations.current.set(repo.id, newOperationId());
     const key = context;
     try {
       const result = await createFromRepo(repo);
-      if (isCurrent(key)) finish(result, repo);
+      if (isCurrent(key)) {
+        quickOperations.current.delete(repo.id);
+        finish(result, repo);
+      }
     } catch (error) {
       if (isCurrent(key)) setRowError({ id: repo.id, text: errorText(error) });
     } finally {
@@ -292,25 +332,41 @@ export function GitWorkspaceSurface({
   };
   const submitForm = async () => {
     if (lock.current || !form || !settings) return;
+    if (
+      form.kind === "new" &&
+      !remoteRepo &&
+      (authRefreshing ||
+        !formAuth[newProvider]?.loggedIn ||
+        !formAuth[newProvider]?.user)
+    )
+      return;
     lock.current = true;
     setBusy(form.kind);
     setFormError("");
     const key = context;
     try {
       if (form.kind === "import") {
-        const result = await importFolder({ path: folderPath });
+        const result = await importFolder({
+          path: folderPath,
+          operationId: `${formOperation.current}:import:${folderPath}`,
+        });
         if (isCurrent(key)) finish(result);
       } else if (form.kind === "options") {
         const result = await createFromRepo(
           form.repo,
           optionIsolation,
-          optionProtocol
+          optionProtocol,
+          `${formOperation.current}:${optionIsolation}:${optionProtocol}`
         );
         if (isCurrent(key)) finish(result, form.repo);
       } else {
         let repo = remoteRepo;
         if (!repo) {
           const result = await createRepository({
+            operationId: `${formOperation.current}:remote`,
+            expectedOwner: formAuth[newProvider]!.user!,
+            gitlabUrl,
+            cloneDir,
             provider: newProvider,
             name,
             isPublic,
@@ -318,16 +374,30 @@ export function GitWorkspaceSurface({
           if (!isCurrent(key)) return;
           repo = result.repo;
           setRemoteRepo(repo);
+          if (!result.uncertain) {
+            setProvider(repo.provider);
+            setSearch("");
+            setQuery("");
+            setRepos((current) => [
+              repo!,
+              ...current.filter((item) => item.id !== repo!.id),
+            ]);
+          }
           setUncertain(result.uncertain);
           if (result.uncertain) {
             setFormError("已找到同名仓库，创建结果待确认。可使用该仓库继续。");
             return;
           }
         }
-        const result = await createFromRepo(repo);
+        const result = await createFromRepo(
+          repo,
+          isolation,
+          protocol,
+          `${formOperation.current}:workspace`
+        );
         if (isCurrent(key)) {
           finish(result, repo);
-          void load();
+          void latestLoad.current();
         }
       }
     } catch (error) {
@@ -533,7 +603,7 @@ export function GitWorkspaceSurface({
       : form?.kind === "import"
       ? "导入本地文件夹"
       : "创建工作区";
-  const newAuth = auth[newProvider];
+  const newAuth = formAuth[newProvider];
   const formLabel = busy
     ? form?.kind === "import"
       ? "导入中…"
@@ -585,8 +655,10 @@ export function GitWorkspaceSurface({
             style={styles.input}
             value={search}
             onChangeText={(value) => {
-              request.current++;
-              setSearch(value);
+              if (search !== value) {
+                request.current++;
+                setSearch(value);
+              }
             }}
             autoCapitalize="none"
             autoCorrect={false}
@@ -603,8 +675,10 @@ export function GitWorkspaceSurface({
                     ? "GitHub"
                     : "GitLab",
                   () => {
-                    request.current++;
-                    setProvider(value);
+                    if (provider !== value) {
+                      request.current++;
+                      setProvider(value);
+                    }
                   },
                   { ghost: provider !== value }
                 )}
@@ -773,10 +847,18 @@ export function GitWorkspaceSurface({
                     accessibilityLabel="仓库名称"
                     style={[styles.input, { flex: 0 }]}
                     value={name}
-                    onChangeText={setName}
+                    onChangeText={(value) => {
+                      setName(value);
+                      setFormError("");
+                      if (uncertain) {
+                        setRemoteRepo(undefined);
+                        setUncertain(false);
+                      }
+                      formOperation.current = newOperationId();
+                    }}
                     placeholder="my-project"
                     placeholderTextColor={theme.colors.foregroundMuted}
-                    editable={!busy && !remoteRepo}
+                    editable={!busy && (!remoteRepo || uncertain)}
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
@@ -795,9 +877,20 @@ export function GitWorkspaceSurface({
                 ) : null}
                 <Text style={styles.muted}>
                   {newAuth?.loggedIn
-                    ? `使用已登录账户 ${newAuth.user ? `@${newAuth.user}` : ""}`
+                    ? `@${newAuth.user} · ${
+                        newProvider === "github"
+                          ? "github.com"
+                          : gitlabUrl
+                              .replace(/^https?:\/\//, "")
+                              .replace(/\/.*$/, "")
+                      }`
                     : accountText(newAuth)}
                 </Text>
+                {!authRefreshing && !newAuth?.loggedIn
+                  ? button("重新检查登录", refreshFormAuth, {
+                      disabled: !!busy,
+                    })
+                  : null}
               </>
             ) : form?.kind === "import" ? (
               <>
@@ -909,7 +1002,10 @@ export function GitWorkspaceSurface({
                   browsing ||
                   (form?.kind === "new" &&
                     !remoteRepo &&
-                    (!name.trim() || !newAuth?.loggedIn)) ||
+                    (!name.trim() ||
+                      authRefreshing ||
+                      !newAuth?.loggedIn ||
+                      !newAuth.user)) ||
                   (form?.kind === "import" && !folderPath.trim()),
               })}
             </View>

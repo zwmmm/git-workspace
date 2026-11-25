@@ -7,15 +7,22 @@ import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { RepoItem } from "../shared/contracts";
 
 const exec = promisify(execFile);
+const githubExec = (args: string[]) =>
+  exec("gh", args, {
+    env: { ...process.env, GH_HOST: "github.com" },
+    timeout: 30_000,
+  });
 
 export function parseGitLabHost(urlOrHost?: string): string {
   if (!urlOrHost || !urlOrHost.trim()) return "gitlab.com";
   const raw = urlOrHost.trim();
-  const match = raw.match(/^(?:https?:\/\/)?([^/:]+)(?::\d+)?/);
-  if (match && match[1]) {
-    return match[1];
-  }
-  return raw.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    [".", ".."].includes(parsed.hostname)
+  )
+    throw new Error("无效的 GitLab 地址");
+  return parsed.host;
 }
 
 export function resolveCloneDir(dir?: string): string {
@@ -33,21 +40,22 @@ export async function checkGitHubAuth(): Promise<{
   error?: string;
 }> {
   try {
-    const { stdout, stderr } = await exec("gh", ["auth", "status"]);
-    const output = `${stdout}\n${stderr}`;
-    const userMatch = output.match(/Logged in to [^ ]+ account ([^ (]+)/i);
-    return {
-      installed: true,
-      loggedIn: true,
-      user: userMatch ? userMatch[1] : undefined,
-    };
+    const { stdout } = await githubExec([
+      "api",
+      "user",
+      "--hostname",
+      "github.com",
+    ]);
+    const user = JSON.parse(stdout).login;
+    if (typeof user !== "string" || !user) throw new Error("无法识别登录账户");
+    return { installed: true, loggedIn: true, user };
   } catch (err: unknown) {
     const stderr =
       typeof err === "object" && err !== null && "stderr" in err
         ? String(err.stderr)
         : err instanceof Error
-          ? err.message
-          : String(err);
+        ? err.message
+        : String(err);
     const code =
       typeof err === "object" && err !== null && "code" in err
         ? String(err.code)
@@ -76,22 +84,19 @@ export async function checkGitLabAuth(gitlabUrl?: string): Promise<{
 }> {
   const host = parseGitLabHost(gitlabUrl);
   try {
-    const { stdout, stderr } = await exec("glab", ["auth", "status", "--hostname", host]);
-    const output = `${stdout}\n${stderr}`;
-    const userMatch = output.match(/Logged in to [^ ]+ as ([^ (]+)/i);
-    return {
-      installed: true,
-      loggedIn: true,
-      host,
-      user: userMatch ? userMatch[1] : undefined,
-    };
+    const { stdout } = await exec("glab", ["api", "user", "--hostname", host], {
+      timeout: 30_000,
+    });
+    const user = JSON.parse(stdout).username;
+    if (typeof user !== "string" || !user) throw new Error("无法识别登录账户");
+    return { installed: true, loggedIn: true, host, user };
   } catch (err: unknown) {
     const stderr =
       typeof err === "object" && err !== null && "stderr" in err
         ? String(err.stderr)
         : err instanceof Error
-          ? err.message
-          : String(err);
+        ? err.message
+        : String(err);
     const code =
       typeof err === "object" && err !== null && "code" in err
         ? String(err.code)
@@ -135,12 +140,12 @@ interface RawGhRepo {
 
 export async function fetchGitHubRepos(
   query: string | undefined,
-  cloneBaseDir: string,
+  cloneBaseDir: string
 ): Promise<RepoItem[]> {
   try {
     let stdout = "";
     if (query && query.trim()) {
-      const res = await exec("gh", [
+      const res = await githubExec([
         "search",
         "repos",
         query.trim(),
@@ -151,7 +156,7 @@ export async function fetchGitHubRepos(
       ]);
       stdout = res.stdout;
     } else {
-      const res = await exec("gh", [
+      const res = await githubExec([
         "repo",
         "list",
         "--limit",
@@ -178,7 +183,9 @@ export async function fetchGitHubRepos(
         description: item.description || "",
         url: item.url || `https://github.com/${fullName}`,
         sshUrl: item.sshUrl || `git@github.com:${fullName}.git`,
-        httpUrl: item.url ? `${item.url}.git` : `https://github.com/${fullName}.git`,
+        httpUrl: item.url
+          ? `${item.url}.git`
+          : `https://github.com/${fullName}.git`,
         defaultBranch: item.defaultBranchRef?.name || "main",
         provider: "github",
         isPrivate: Boolean(item.isPrivate),
@@ -189,7 +196,11 @@ export async function fetchGitHubRepos(
 
     return results;
   } catch (err: unknown) {
-    throw new Error(`加载 GitHub 仓库失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `加载 GitHub 仓库失败: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
 }
 
@@ -207,24 +218,21 @@ interface RawGitLabRepo {
 export async function fetchGitLabRepos(
   query: string | undefined,
   gitlabUrl: string | undefined,
-  cloneBaseDir: string,
+  cloneBaseDir: string
 ): Promise<RepoItem[]> {
   const host = parseGitLabHost(gitlabUrl);
   try {
     const apiPath =
       query && query.trim()
-        ? `projects?search=${encodeURIComponent(query.trim())}&membership=true&per_page=30`
+        ? `projects?search=${encodeURIComponent(
+            query.trim()
+          )}&membership=true&per_page=30`
         : `projects?membership=true&order_by=last_activity_at&per_page=30`;
 
-    const { stdout } = await exec("glab", [
-      "api",
-      apiPath,
-      "--hostname",
-      host,
-    ]);
+    const { stdout } = await exec("glab", ["api", apiPath, "--hostname", host]);
 
     const items = JSON.parse(stdout || "[]") as RawGitLabRepo[];
-    if (!Array.isArray(items)) return [];
+    if (!Array.isArray(items)) throw new Error("GitLab 返回了无效的仓库列表");
 
     const results: RepoItem[] = [];
 
@@ -244,7 +252,8 @@ export async function fetchGitLabRepos(
         httpUrl: item.http_url_to_repo || `https://${host}/${fullName}.git`,
         defaultBranch: item.default_branch || "main",
         provider: "gitlab",
-        isPrivate: item.visibility === "private" || item.visibility === "internal",
+        isPrivate:
+          item.visibility === "private" || item.visibility === "internal",
         isLocal,
         localPath,
       });
@@ -252,7 +261,11 @@ export async function fetchGitLabRepos(
 
     return results;
   } catch (err: unknown) {
-    throw new Error(`加载 GitLab 仓库失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `加载 GitLab 仓库失败: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
 }
 
@@ -265,13 +278,24 @@ export async function cloneAndCreateWorkspace(
     isolation: "worktree" | "local";
     gitlabUrl?: string;
     cloneDir?: string;
+    operationId?: string;
   },
-  paseo: PluginHandlerContext["paseo"],
+  paseo: PluginHandlerContext["paseo"]
 ): Promise<{ workspaceId: string; title: string; localPath: string }> {
   const cloneBaseDir = resolveCloneDir(params.cloneDir);
-  const host = params.provider === "github" ? "github.com" : parseGitLabHost(params.gitlabUrl);
+  const host =
+    params.provider === "github"
+      ? "github.com"
+      : parseGitLabHost(params.gitlabUrl);
   const parts = params.repoFullName.split("/");
-  if (parts.length < 2 || parts.some(part => !part || part === "." || part === ".." || part.includes("\\")) || host === "." || host === "..") {
+  if (
+    parts.length < 2 ||
+    parts.some(
+      (part) => !part || part === "." || part === ".." || part.includes("\\")
+    ) ||
+    host === "." ||
+    host === ".."
+  ) {
     throw new Error("无效的仓库路径");
   }
   const targetPath = path.join(cloneBaseDir, host, params.repoFullName);
@@ -281,13 +305,16 @@ export async function cloneAndCreateWorkspace(
   // 1. 如果本地尚未克隆，先执行完整 clone 以确保 .git 和 HEAD 结构完整
   if (!isLocal) {
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    console.log(`[git-workspace] Cloning ${params.cloneUrl} into ${targetPath}...`);
+    console.log(
+      `[git-workspace] Cloning ${params.cloneUrl} into ${targetPath}...`
+    );
     await exec("git", ["clone", "--", params.cloneUrl, targetPath]);
     console.log(`[git-workspace] Clone completed for ${params.repoFullName}`);
   }
 
   // 2. 本地已完整存在，安全创建 Paseo 工作区
   const workspace = await paseo.workspaces.create({
+    ...(params.operationId ? { idempotencyKey: params.operationId } : {}),
     title: params.repoFullName,
     source:
       params.isolation === "worktree"

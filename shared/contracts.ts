@@ -89,6 +89,7 @@ export const TriggerSyncRpc = defineRpc({
 export const CreateWorkspaceRpc = defineRpc({
   name: "git.create-workspace",
   input: z.object({
+    operationId: z.string().min(1),
     provider: z.enum(["github", "gitlab"]),
     repoFullName: z.string(),
     cloneUrl: z.string(),
@@ -107,6 +108,10 @@ export const CreateWorkspaceRpc = defineRpc({
 export const CreateRepositoryRpc = defineRpc({
   name: "git.create-repository",
   input: z.object({
+    operationId: z.string().min(1),
+    expectedOwner: z.string().min(1),
+    gitlabUrl: z.string().optional(),
+    cloneDir: z.string().optional(),
     provider: z.enum(["github", "gitlab"]),
     name: z.string().trim().min(1),
     isPublic: z.boolean().default(false),
@@ -126,6 +131,9 @@ export const BrowseFoldersRpc = defineRpc({
 
 export const ImportFolderRpc = defineRpc({
   name: "git.import-folder",
-  input: z.object({ path: z.string().trim().min(1) }),
+  input: z.object({
+    path: z.string().trim().min(1),
+    operationId: z.string().min(1),
+  }),
   output: CreateWorkspaceRpc.output,
 });

@@ -212,3 +212,54 @@ test("workspace creation rejects repository names that escape the clone root", a
     )
   ).rejects.toThrow("仓库路径");
 });
+
+test("a failed first sync stays idle until an explicit or scheduled retry", async () => {
+  remote.github.mockRejectedValue(new Error("offline"));
+  remote.gitlab.mockRejectedValue(new Error("offline"));
+  await cache.syncAll();
+  await cache.getRepos({ provider: "all" });
+  expect(remote.github).toHaveBeenCalledTimes(1);
+  expect((await cache.getRepos({ provider: "all" })).isSyncing).toBe(false);
+});
+
+test("queued callers for a new host all await that hosts own sync", async () => {
+  let finishA!: (x: never[]) => void, finishB!: (x: never[]) => void;
+  remote.gitlab.mockImplementation(
+    (_q: unknown, url: string) =>
+      new Promise((resolve) => {
+        if (url.includes("a.example")) finishA = resolve;
+        else finishB = resolve;
+      })
+  );
+  const a = cache.syncAll("https://a.example");
+  const b1 = cache.syncAll("https://b.example");
+  const b2 = cache.syncAll("https://b.example");
+  let settled = false;
+  void b2.then(() => {
+    settled = true;
+  });
+  finishA([]);
+  await a;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(settled).toBe(false);
+  finishB([]);
+  expect(await b1).toEqual(await b2);
+});
+
+test("GitLab instance parsing preserves explicit ports", async () => {
+  const actual = await vi.importActual<typeof import("../server/git-service")>(
+    "../server/git-service"
+  );
+  expect(actual.parseGitLabHost("https://git.example.com:8443/")).toBe(
+    "git.example.com:8443"
+  );
+});
+
+test("newly created repository is available before the next source sync", async () => {
+  remote.github.mockResolvedValue([]);
+  await cache.syncAll();
+  await cache.rememberCreated(repo, "https://gitlab.com");
+  expect(
+    (await cache.getRepos({ provider: "github" })).repos.map((r) => r.fullName)
+  ).toEqual(["acme/app"]);
+});

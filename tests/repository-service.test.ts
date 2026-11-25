@@ -7,11 +7,14 @@ import * as service from "../server/repository-service";
 
 let root: string;
 let originalPath: string | undefined;
+let originalGhHost: string | undefined;
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "repos-service-"));
   originalPath = process.env.PATH;
+  originalGhHost = process.env.GH_HOST;
   const script = `#!/usr/bin/env node
 const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(process.env.REPOS_TEST_LOG,JSON.stringify(a)+'\\n');
+if(a.some(x=>x.startsWith('projects?'))&&process.env.REPOS_TEST_FAIL==='invalid-json'){console.log(JSON.stringify({message:'unexpected'}));process.exit()}
 if(a.includes('user')){console.log(JSON.stringify({login:'alice',username:'alice',id:7}));process.exit()}
 if(a.includes('POST')){if(process.env.REPOS_TEST_FAIL==='conflict'){console.error('HTTP 422: name already exists');process.exit(1)}if(process.env.REPOS_TEST_FAIL==='yes'){console.error('network timeout');process.exit(1)}console.log(JSON.stringify({full_name:'alice/demo',name:'demo',html_url:'https://github.com/alice/demo',clone_url:'https://github.com/alice/demo.git',ssh_url:'git@github.com:alice/demo.git',default_branch:'trunk',private:true,path_with_namespace:'alice/demo',web_url:'https://git.example.com/alice/demo',ssh_url_to_repo:'git@git.example.com:alice/demo.git',http_url_to_repo:'https://git.example.com/alice/demo.git',visibility:'private'}));process.exit()}
 if(process.env.REPOS_TEST_FAIL==='yes'){console.log(JSON.stringify({full_name:'alice/demo',name:'demo',html_url:'https://github.com/alice/demo',clone_url:'https://github.com/alice/demo.git',ssh_url:'git@github.com:alice/demo.git',default_branch:'trunk',private:true}));process.exit()}
@@ -25,6 +28,8 @@ console.error('404');process.exit(1);
 });
 afterEach(async () => {
   process.env.PATH = originalPath;
+  if (originalGhHost === undefined) delete process.env.GH_HOST;
+  else process.env.GH_HOST = originalGhHost;
   delete process.env.REPOS_TEST_LOG;
   delete process.env.REPOS_TEST_FAIL;
   await fs.rm(root, { recursive: true, force: true });
@@ -185,4 +190,66 @@ test("import searches remaining workspace pages before creating a duplicate", as
   const result = await service.importFolder(folder, paseo);
   expect(result.workspaceId).toBe("existing");
   expect(creates).toBe(0);
+});
+
+test("concurrent imports of one real directory share the same workspace creation", async () => {
+  const folder = path.join(root, "local");
+  await fs.mkdir(folder);
+  let creates = 0;
+  const paseo = {
+    workspaces: {
+      list: async () => ({ entries: [] }),
+      create: async () => {
+        creates++;
+        await new Promise((r) => setTimeout(r, 10));
+        return { id: "shared" };
+      },
+    },
+  } as unknown as Parameters<typeof service.importFolder>[1];
+  const [first, second] = await Promise.all([
+    service.importFolder(folder, paseo),
+    service.importFolder(folder, paseo),
+  ]);
+  expect(creates).toBe(1);
+  expect(first.workspaceId).toBe(second.workspaceId);
+});
+
+test("GitHub creation explicitly targets github.com even when another GH_HOST is configured", async () => {
+  process.env.GH_HOST = "enterprise.example.com";
+  await service.createRepository(
+    { provider: "github", name: "demo", isPublic: false },
+    settings()
+  );
+  const calls = (await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8"))
+    .trim()
+    .split("\n")
+    .map((x) => JSON.parse(x) as string[]);
+  expect(
+    calls.every((a) => a.includes("--hostname") && a.includes("github.com"))
+  ).toBe(true);
+});
+
+test("account changes after confirmation reject the write before creating a repository", async () => {
+  await expect(
+    service.createRepository(
+      {
+        provider: "github",
+        name: "demo",
+        isPublic: false,
+        expectedOwner: "bob",
+      },
+      settings()
+    )
+  ).rejects.toThrow("账户已变化");
+  expect(await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8")).not.toContain(
+    "POST"
+  );
+});
+
+test("malformed provider JSON is a source failure rather than a successful empty list", async () => {
+  process.env.REPOS_TEST_FAIL = "invalid-json";
+  const { fetchGitLabRepos } = await import("../server/git-service");
+  await expect(
+    fetchGitLabRepos(undefined, "https://git.example.com", root)
+  ).rejects.toThrow("无效的仓库列表");
 });

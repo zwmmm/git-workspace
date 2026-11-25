@@ -17,14 +17,19 @@ async function api(
 ) {
   const { stdout } = await exec(
     provider === "github" ? "gh" : "glab",
-    ["api", ...args, ...(provider === "gitlab" ? ["--hostname", host] : [])],
+    ["api", ...args, "--hostname", host],
     commandOptions
   );
   return JSON.parse(stdout);
 }
 
 export async function createRepository(
-  input: { provider: "github" | "gitlab"; name: string; isPublic: boolean },
+  input: {
+    provider: "github" | "gitlab";
+    name: string;
+    isPublic: boolean;
+    expectedOwner?: string;
+  },
   settings: GitWorkspaceSettings
 ): Promise<{ repo: RepoItem; uncertain: boolean }> {
   const name = input.name.trim();
@@ -43,6 +48,8 @@ export async function createRepository(
   const owner: string =
     input.provider === "github" ? user.login : user.username;
   if (!owner) throw new Error("无法识别已登录账户，请重新登录后重试");
+  if (input.expectedOwner && input.expectedOwner !== owner)
+    throw new Error("登录账户已变化，请重新打开表单确认");
   const fullName = `${owner}/${name}`;
   const localPath = path.join(
     resolveCloneDir(settings.cloneDir),
@@ -177,12 +184,35 @@ export async function browseFolders(input?: string) {
   };
 }
 
+const pendingImports = new Map<
+  string,
+  Promise<{ workspaceId: string; title: string; localPath: string }>
+>();
+
 export async function importFolder(
   input: string,
-  paseo: PluginHandlerContext["paseo"]
+  paseo: PluginHandlerContext["paseo"],
+  operationId?: string
 ) {
   if (!input.trim()) throw new Error("请选择文件夹");
   const folder = await inspectFolder(input);
+  const pending = pendingImports.get(folder.path);
+  if (pending) return pending;
+  const result = findOrCreateFolder(folder, paseo, operationId);
+  pendingImports.set(folder.path, result);
+  try {
+    return await result;
+  } finally {
+    if (pendingImports.get(folder.path) === result)
+      pendingImports.delete(folder.path);
+  }
+}
+
+async function findOrCreateFolder(
+  folder: Awaited<ReturnType<typeof inspectFolder>>,
+  paseo: PluginHandlerContext["paseo"],
+  operationId?: string
+) {
   let cursor: string | undefined;
   do {
     const result = await paseo.workspaces.list({
@@ -207,6 +237,7 @@ export async function importFolder(
       : undefined;
   } while (cursor);
   const workspace = await paseo.workspaces.create({
+    ...(operationId ? { idempotencyKey: operationId } : {}),
     title: folder.name,
     source: { kind: "directory", path: folder.path },
   });

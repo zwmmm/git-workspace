@@ -213,3 +213,123 @@ test("an older search response cannot replace a newer query result", async () =>
   expect(button("克隆并创建 alice/new")).toBeDefined();
   expect(button("克隆并创建 alice/demo")).toBeUndefined();
 });
+
+test("a completed manual sync reloads the current provider rather than the previous one", async () => {
+  let finish!: (x: unknown) => void;
+  state.sync.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  state.list.mockImplementation(({ provider }: { provider: string }) =>
+    Promise.resolve({
+      repos: [
+        provider === "gitlab"
+          ? {
+              ...repo,
+              id: "gitlab:new",
+              provider: "gitlab",
+              fullName: "team/new",
+            }
+          : repo,
+      ],
+      auth,
+    })
+  );
+  await mount();
+  await act(async () => {
+    void button("同步").props.onPress();
+  });
+  await press("GitLab");
+  await act(async () => finish({}));
+  expect(button("克隆并创建 team/new")).toBeDefined();
+  expect(button("克隆并创建 alice/demo")).toBeUndefined();
+});
+
+test("new remote creation waits for the refreshed account instead of using cached login state", async () => {
+  let finish!: (x: unknown) => void;
+  state.auth.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  await mount();
+  await press("新建仓库");
+  const input = renderer.root
+    .findAllByType("TextInput" as never)
+    .find((n) => n.props.accessibilityLabel === "仓库名称")!;
+  await act(async () => input.props.onChangeText("demo"));
+  expect(button("创建并打开").props.disabled).toBe(true);
+  await act(async () => finish(auth));
+  expect(button("创建并打开").props.disabled).toBe(false);
+});
+
+test("returning to a host cannot let an older creation unlock or navigate a newer operation", async () => {
+  let oldFinish!: (x: unknown) => void, newFinish!: (x: unknown) => void;
+  state.create
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        oldFinish = resolve;
+      })
+    )
+    .mockReturnValueOnce(
+      new Promise((resolve) => {
+        newFinish = resolve;
+      })
+    );
+  await mount();
+  await act(async () => {
+    void button("克隆并创建 alice/demo").props.onPress();
+  });
+  await act(async () =>
+    renderer.update(
+      <GitWorkspaceSurface {...props} host={{ id: "other", label: "Other" }} />
+    )
+  );
+  await act(async () => renderer.update(<GitWorkspaceSurface {...props} />));
+  await act(async () => {
+    void button("克隆并创建 alice/demo").props.onPress();
+  });
+  await act(async () =>
+    oldFinish({ workspaceId: "old", localPath: repo.localPath })
+  );
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(button("克隆并创建 alice/demo").props.disabled).toBe(true);
+  await act(async () =>
+    newFinish({ workspaceId: "new", localPath: repo.localPath })
+  );
+  expect(state.navigate).toHaveBeenCalledWith({ workspaceId: "new" });
+});
+
+test("clicking the active provider does not invalidate the only pending load", async () => {
+  let finish!: (x: unknown) => void;
+  state.list.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  await mount();
+  await press("全部");
+  await act(async () => finish({ repos: [repo], auth }));
+  expect(button("克隆并创建 alice/demo")).toBeDefined();
+});
+
+test("an uncertain repository result permits changing the name and creating a different repository", async () => {
+  state.remote.mockResolvedValue({ repo, uncertain: true });
+  await mount();
+  await press("新建仓库");
+  let input = renderer.root
+    .findAllByType("TextInput" as never)
+    .find((n) => n.props.accessibilityLabel === "仓库名称")!;
+  await act(async () => input.props.onChangeText("demo"));
+  await press("创建并打开");
+  input = renderer.root
+    .findAllByType("TextInput" as never)
+    .find((n) => n.props.accessibilityLabel === "仓库名称")!;
+  expect(input.props.editable).toBe(true);
+  await act(async () => input.props.onChangeText("another"));
+  await press("创建并打开");
+  expect(state.remote).toHaveBeenLastCalledWith(
+    expect.objectContaining({ name: "another" })
+  );
+});

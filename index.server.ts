@@ -9,7 +9,12 @@ import {
   BrowseFoldersRpc,
   ImportFolderRpc,
 } from "./shared/contracts";
-import { cloneAndCreateWorkspace } from "./server/git-service";
+import { runOperation } from "./server/operations";
+import {
+  cloneAndCreateWorkspace,
+  parseGitLabHost,
+  resolveCloneDir,
+} from "./server/git-service";
 import { repoCacheService } from "./server/cache-service";
 import {
   createRepository,
@@ -51,26 +56,59 @@ export default function contribute(server: PluginServerContext) {
       count: repos.length,
     };
   });
+  const ensureTarget = (
+    input: {
+      provider: "github" | "gitlab";
+      gitlabUrl?: string;
+      cloneDir?: string;
+    },
+    config: Awaited<ReturnType<typeof readSettings>>
+  ) => {
+    if (
+      (input.provider === "gitlab" &&
+        (!input.gitlabUrl ||
+          parseGitLabHost(input.gitlabUrl) !==
+            parseGitLabHost(config.gitlabUrl))) ||
+      (input.cloneDir &&
+        resolveCloneDir(input.cloneDir) !== resolveCloneDir(config.cloneDir))
+    )
+      throw new Error("仓库设置已变化，请刷新后重试");
+  };
   server.handle(CreateWorkspaceRpc, async (input, { paseo }) => {
     const config = await readSettings();
-    return cloneAndCreateWorkspace(
-      { ...input, gitlabUrl: config.gitlabUrl, cloneDir: config.cloneDir },
-      paseo
+    ensureTarget(input, config);
+    return runOperation(
+      `workspace:${input.operationId}`,
+      { input, config },
+      () =>
+        cloneAndCreateWorkspace(
+          { ...input, gitlabUrl: config.gitlabUrl, cloneDir: config.cloneDir },
+          paseo
+        )
     );
   });
   server.handle(CreateRepositoryRpc, async (input) => {
+    await ready;
     const config = await readSettings();
-    const result = await createRepository(input, config);
-    void repoCacheService
-      .syncAll(config.gitlabUrl, config.cloneDir)
-      .catch(console.error);
-    return result;
+    ensureTarget(input, config);
+    return runOperation(
+      `repository:${input.operationId}`,
+      { input, config },
+      async () => {
+        const result = await createRepository(input, config);
+        if (!result.uncertain)
+          await repoCacheService.rememberCreated(result.repo, config.gitlabUrl);
+        return result;
+      }
+    );
   });
   server.handle(BrowseFoldersRpc, async ({ path }) =>
     browseFolders(path || (await readSettings()).cloneDir)
   );
-  server.handle(ImportFolderRpc, ({ path }, { paseo }) =>
-    importFolder(path, paseo)
+  server.handle(ImportFolderRpc, ({ path, operationId }, { paseo }) =>
+    runOperation(`import:${operationId}`, { path }, () =>
+      importFolder(path, paseo, operationId)
+    )
   );
   return () => {
     repoCacheService.destroy();

@@ -52,7 +52,10 @@ class RepoCacheService {
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private initialized = false;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
-  private activeSync: Promise<SyncResult> | null = null;
+  private activeSync: { key: string; result: Promise<SyncResult> } | null =
+    null;
+  private attemptedSync = new Set<string>();
+  private created = new Map<string, RepoItem>();
   private errors: Record<string, string> = {};
   private readConfig: () => Promise<SyncConfig> = async () => ({});
 
@@ -126,31 +129,62 @@ class RepoCacheService {
   }
 
   async syncAll(gitlabUrl?: string, cloneDir?: string): Promise<SyncResult> {
+    const key = `${parseGitLabHost(gitlabUrl)}:${resolveCloneDir(cloneDir)}`;
     if (this.activeSync) {
-      await this.activeSync;
-      // A different GitLab instance or clone root must get its own synchronization.
-      if (
-        this.syncKey !==
-        `${parseGitLabHost(gitlabUrl)}:${resolveCloneDir(cloneDir)}`
-      ) {
-        return this.syncAll(gitlabUrl, cloneDir);
-      }
-      return this.lastResult!;
+      const pending = this.activeSync;
+      const result = await pending.result;
+      return pending.key === key ? result : this.syncAll(gitlabUrl, cloneDir);
     }
-    this.syncKey = `${parseGitLabHost(gitlabUrl)}:${resolveCloneDir(cloneDir)}`;
+    this.attemptedSync.add(key);
     this.isSyncing = true;
-    this.activeSync = this.performSync(gitlabUrl, cloneDir);
+    const pending = { key, result: this.performSync(gitlabUrl, cloneDir) };
+    this.activeSync = pending;
     try {
-      this.lastResult = await this.activeSync;
-      return this.lastResult;
+      return await pending.result;
     } finally {
-      this.activeSync = null;
-      this.isSyncing = false;
+      if (this.activeSync === pending) {
+        this.activeSync = null;
+        this.isSyncing = false;
+      }
     }
   }
 
-  private syncKey = "";
-  private lastResult: SyncResult | null = null;
+  async rememberCreated(repo: RepoItem, gitlabUrl?: string) {
+    this.created.set(repo.id, repo);
+    if (repo.provider === "github")
+      this.cache.github = [
+        repo,
+        ...this.cache.github.filter((item) => item.id !== repo.id),
+      ];
+    else {
+      const host = parseGitLabHost(gitlabUrl);
+      this.cache.gitlab[host] = [
+        repo,
+        ...(this.cache.gitlab[host] || []).filter(
+          (item) => item.id !== repo.id
+        ),
+      ];
+    }
+    await this.persist();
+  }
+
+  private mergeCreated(
+    repos: RepoItem[],
+    provider: "github" | "gitlab",
+    host: string
+  ) {
+    const ids = new Set(repos.map((repo) => repo.id));
+    for (const repo of this.created.values()) {
+      if (
+        repo.provider !== provider ||
+        (provider === "gitlab" && !repo.id.startsWith(`gitlab:${host}:`))
+      )
+        continue;
+      if (ids.has(repo.id)) this.created.delete(repo.id);
+      else repos = [repo, ...repos];
+    }
+    return repos;
+  }
 
   private async performSync(
     gitlabUrl?: string,
@@ -173,14 +207,18 @@ class RepoCacheService {
     if (!this.cache.syncedAt.gitlab) this.cache.syncedAt.gitlab = {};
     const now = Date.now();
     if (ghRepos.status === "fulfilled") {
-      this.cache.github = ghRepos.value;
+      this.cache.github = this.mergeCreated(ghRepos.value, "github", host);
       this.cache.syncedAt.github = now;
       delete this.errors.github;
     } else {
       this.errors.github = `GitHub: ${errorMessage(ghRepos.reason)}`;
     }
     if (glRepos.status === "fulfilled") {
-      this.cache.gitlab[host] = glRepos.value;
+      this.cache.gitlab[host] = this.mergeCreated(
+        glRepos.value,
+        "gitlab",
+        host
+      );
       this.cache.syncedAt.gitlab[host] = now;
       delete this.errors[host];
     } else {
@@ -244,7 +282,7 @@ class RepoCacheService {
     const baseDir = resolveCloneDir(params.cloneDir);
     const host = parseGitLabHost(params.gitlabUrl);
 
-    if (params.forceRefresh || this.cache.lastSyncedAt === 0) {
+    if (params.forceRefresh || !this.attemptedSync.has(`${host}:${baseDir}`)) {
       void this.syncAll(params.gitlabUrl, params.cloneDir);
     }
 
