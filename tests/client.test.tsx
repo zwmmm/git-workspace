@@ -110,6 +110,7 @@ const props = {
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("window", new EventTarget());
   state.list.mockResolvedValue({ repos: [repo], auth, isSyncing: false });
   state.auth.mockResolvedValue(auth);
   state.groups.mockResolvedValue({
@@ -124,6 +125,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   if (renderer) await act(async () => renderer.unmount());
+  vi.unstubAllGlobals();
 });
 async function mount() {
   await act(async () => {
@@ -348,20 +350,19 @@ test("GitLab creation can select a group while GitHub keeps its personal account
   await press("新建仓库");
   expect(
     renderer.root
-      .findAllByType("select" as never)
+      .findAllByType("button" as never)
       .filter((n) => n.props["aria-label"] === "创建位置")
   ).toHaveLength(0);
   await press("创建到 GitLab");
   const select = renderer.root
-    .findAllByType("select" as never)
+    .findAllByType("button" as never)
     .find((n) => n.props["aria-label"] === "创建位置")!;
-  expect(
-    select.findAllByType("option").map((n) => ({
-      label: n.props.children,
-      value: n.props.value,
-    }))
-  ).toContainEqual({ label: "team/tools", value: "42" });
-  await act(async () => select.props.onChange({ target: { value: "42" } }));
+  await act(async () => select.props.onClick({ preventDefault: () => {} }));
+  const option = renderer.root
+    .findAllByProps({ role: "option" })
+    .find((n) => n.props["aria-label"] === "team/tools")!;
+  await act(async () => option.props.onClick());
+  expect(select.props["aria-expanded"]).toBe(false);
   const input = renderer.root
     .findAllByType("TextInput" as never)
     .find((n) => n.props.accessibilityLabel === "仓库名称")!;
@@ -391,18 +392,57 @@ test("GitLab creation waits for group discovery and a provider switch clears the
     .find((n) => n.props.accessibilityLabel === "仓库名称")!;
   await act(async () => input.props.onChangeText("demo"));
   expect(button("创建并打开").props.disabled).toBe(true);
-  expect(renderer.root.findByType("select").props.disabled).toBe(true);
+  expect(
+    renderer.root
+      .findAllByType("button")
+      .find((n) => n.props["aria-label"] === "创建位置")!.props.disabled
+  ).toBe(true);
   await act(async () =>
     finish({ groups: [{ id: 42, name: "tools", fullPath: "team/tools" }] })
   );
   const select = renderer.root
-    .findAllByType("select" as never)
+    .findAllByType("button" as never)
     .find((n) => n.props["aria-label"] === "创建位置")!;
-  await act(async () => select.props.onChange({ target: { value: "42" } }));
+  await act(async () => select.props.onClick({ preventDefault: () => {} }));
+  await act(async () =>
+    renderer.root
+      .findAllByProps({ role: "option" })
+      .find((n) => n.props["aria-label"] === "team/tools")!
+      .props.onClick()
+  );
   await press("创建到 GitHub");
   await press("创建并打开");
   expect(state.remote).toHaveBeenCalledWith(
     expect.objectContaining({ provider: "github" })
   );
   expect(state.remote.mock.calls[0][0].namespaceId).toBeUndefined();
+});
+
+test("the namespace menu supports keyboard selection and dismisses without changing the value", async () => {
+  await mount();
+  await press("新建仓库");
+  await press("创建到 GitLab");
+  const trigger = renderer.root
+    .findAllByType("button")
+    .find((n) => n.props["aria-label"] === "创建位置")!;
+  const key = (value: string) => ({ key: value, preventDefault: () => {} });
+  await act(async () => trigger.props.onKeyDown(key("ArrowDown")));
+  let menu = renderer.root.findByProps({ role: "listbox" });
+  await act(async () => menu.props.onKeyDown(key("End")));
+  await act(async () => menu.props.onKeyDown(key("Enter")));
+  expect(trigger.props["aria-expanded"]).toBe(false);
+  expect(trigger.findByType("span").props.children).toBe("team/tools");
+  await act(async () => trigger.props.onClick({ preventDefault: () => {} }));
+  menu = renderer.root.findByProps({ role: "listbox" });
+  await act(async () => menu.props.onKeyDown(key("Home")));
+  await act(async () => menu.props.onKeyDown(key("Escape")));
+  expect(trigger.props["aria-expanded"]).toBe(false);
+  expect(trigger.findByType("span").props.children).toBe("team/tools");
+  await act(async () => trigger.props.onClick({ preventDefault: () => {} }));
+  await act(async () =>
+    renderer.root
+      .findByProps({ role: "listbox" })
+      .props.onToggle({ newState: "closed" })
+  );
+  expect(trigger.props["aria-expanded"]).toBe(false);
 });

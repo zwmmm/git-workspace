@@ -38,6 +38,7 @@ import {
 } from "../shared/contracts";
 import { providerIcons } from "./provider-icons";
 import { messages } from "./messages";
+import { FormSelect } from "./form-select";
 
 type Provider = "github" | "gitlab";
 type Form =
@@ -991,63 +992,14 @@ export function GitWorkspaceSurface({
                         setFormError("");
                         formOperation.current = newOperationId();
                       };
-                      return Platform.OS === "web" ? (
-                        <>
-                          <Text style={styles.label}>创建位置</Text>
-                          <select
-                            aria-label="创建位置"
-                            value={namespace}
-                            disabled={disabled}
-                            onChange={(event) =>
-                              onValueChange(
-                                (event.target as unknown as { value: string })
-                                  .value
-                              )
-                            }
-                            onFocus={() => setFocusedInput("namespace")}
-                            onBlur={() =>
-                              setFocusedInput((current) =>
-                                current === "namespace" ? undefined : current
-                              )
-                            }
-                            style={{
-                              boxSizing: "border-box",
-                              width: "100%",
-                              height: 32,
-                              padding: "5px 12px",
-                              borderRadius: 6,
-                              border: `1px solid ${
-                                focusedInput === "namespace"
-                                  ? theme.colors.border
-                                  : "transparent"
-                              }`,
-                              backgroundColor: theme.colors.surface2,
-                              color: theme.colors.foreground,
-                              fontFamily: "inherit",
-                              fontSize: 14,
-                              lineHeight: "20px",
-                              opacity: disabled ? 0.5 : 1,
-                              outline:
-                                focusedInput === "namespace"
-                                  ? `2px solid ${theme.colors.accent}`
-                                  : "none",
-                              outlineOffset: 1,
-                            }}
-                          >
-                            {options.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      ) : (
-                        <SettingsSelect<string>
+                      return (
+                        <FormSelect
                           label="创建位置"
                           value={namespace}
                           options={options}
                           onValueChange={onValueChange}
                           disabled={disabled}
+                          theme={theme}
                         />
                       );
                     })()}

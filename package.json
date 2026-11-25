@@ -1,7 +1,7 @@
 {
   "name": "git-workspace",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Browse, create, clone, and import repositories into Paseo workspaces",
   "author": "zwmmm",
   "license": "MIT",

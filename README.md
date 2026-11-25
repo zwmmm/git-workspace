@@ -15,7 +15,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.2.1
+paseo plugin add git:zwmmm/git-workspace --ref v1.2.2
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
