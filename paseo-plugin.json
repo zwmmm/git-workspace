@@ -3,7 +3,12 @@
   "name": "Git workspace",
   "description": "Browse, create, clone, and import repositories into Paseo workspaces",
   "icon": "assets/icon.png",
-  "media": ["assets/git-workspace-settings.png"],
+  "media": [
+    "assets/git-workspace-repositories.png",
+    "assets/git-workspace-create.png",
+    "assets/git-workspace-import.png",
+    "assets/git-workspace-settings.png"
+  ],
   "requirements": {
     "paseo": ">=0.17.4"
   },

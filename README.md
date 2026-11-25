@@ -8,6 +8,20 @@ Browse GitHub and GitLab repositories, create a remote repository, or import a f
 - Import a folder from the connected host. Existing workspaces for the same directory are opened again.
 - Open the repository browser from the sidebar, Command Center, or `/git`.
 
+## Screenshots
+
+Repository search and local-status filters:
+
+![Repository list filtered to the public git-workspace repository](assets/git-workspace-repositories.png)
+
+Create a private repository using the signed-in account:
+
+![New repository form with GitHub and GitLab choices](assets/git-workspace-create.png)
+
+Open a directory on the connected host:
+
+![Import local folder form](assets/git-workspace-import.png)
+
 ## Requirements
 
 Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and, for the corresponding provider, an authenticated GitHub CLI (`gh`) or GitLab CLI (`glab`). Folder import works without a GitHub or GitLab account.
@@ -15,7 +29,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.2.2
+paseo plugin add git:zwmmm/git-workspace --ref v1.2.3
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
@@ -33,6 +47,14 @@ Folder import uses the original host directory. It does not copy files, initiali
 Repository discovery and creation use `gh` and `glab` on the daemon host, contacting GitHub or the configured GitLab instance. Git clone uses the selected protocol. Repository metadata is cached in `~/.paseo/git-workspace-cache.json` on that host. The plugin does not collect a separate access token or install CLI tools automatically.
 
 The plugin runs with Paseo's trusted plugin permissions, including access to host files and processes. It does not send prompts or repository contents to an agent provider.
+
+## Updates
+
+See the [latest release](https://github.com/zwmmm/git-workspace/releases/latest) for update details. For an installation from GitHub:
+
+```sh
+paseo plugin update git-workspace --ref v1.2.3
+```
 
 ## Development
 
