@@ -961,10 +961,8 @@ export function GitWorkspaceSurface({
                 </View>
                 {newProvider === "gitlab" ? (
                   <View style={styles.field}>
-                    <SettingsSelect<string>
-                      label="创建位置"
-                      value={namespace}
-                      options={[
+                    {(() => {
+                      const options = [
                         {
                           label: groupsLoading ? "加载分组中…" : "个人空间",
                           value: "personal",
@@ -982,16 +980,77 @@ export function GitWorkspaceSurface({
                               },
                             ]
                           : []),
-                      ]}
-                      onValueChange={(value) => {
+                      ];
+                      const disabled =
+                        !!busy ||
+                        !!remoteRepo ||
+                        groupsLoading ||
+                        !!groupsError;
+                      const onValueChange = (value: string) => {
                         setNamespace(value);
                         setFormError("");
                         formOperation.current = newOperationId();
-                      }}
-                      disabled={
-                        !!busy || !!remoteRepo || groupsLoading || !!groupsError
-                      }
-                    />
+                      };
+                      return Platform.OS === "web" ? (
+                        <>
+                          <Text style={styles.label}>创建位置</Text>
+                          <select
+                            aria-label="创建位置"
+                            value={namespace}
+                            disabled={disabled}
+                            onChange={(event) =>
+                              onValueChange(
+                                (event.target as unknown as { value: string })
+                                  .value
+                              )
+                            }
+                            onFocus={() => setFocusedInput("namespace")}
+                            onBlur={() =>
+                              setFocusedInput((current) =>
+                                current === "namespace" ? undefined : current
+                              )
+                            }
+                            style={{
+                              boxSizing: "border-box",
+                              width: "100%",
+                              height: 32,
+                              padding: "5px 12px",
+                              borderRadius: 6,
+                              border: `1px solid ${
+                                focusedInput === "namespace"
+                                  ? theme.colors.border
+                                  : "transparent"
+                              }`,
+                              backgroundColor: theme.colors.surface2,
+                              color: theme.colors.foreground,
+                              fontFamily: "inherit",
+                              fontSize: 14,
+                              lineHeight: "20px",
+                              opacity: disabled ? 0.5 : 1,
+                              outline:
+                                focusedInput === "namespace"
+                                  ? `2px solid ${theme.colors.accent}`
+                                  : "none",
+                              outlineOffset: 1,
+                            }}
+                          >
+                            {options.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      ) : (
+                        <SettingsSelect<string>
+                          label="创建位置"
+                          value={namespace}
+                          options={options}
+                          onValueChange={onValueChange}
+                          disabled={disabled}
+                        />
+                      );
+                    })()}
                     {groupsError ? (
                       <View style={styles.field}>
                         <Text style={styles.error}>{groupsError}</Text>
