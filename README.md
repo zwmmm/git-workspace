@@ -1,5 +1,7 @@
 # Git workspace for Paseo
 
+<img src="assets/icon.png" alt="Git workspace logo" width="80" height="80" />
+
 Browse GitHub and GitLab repositories, create a remote repository, or import a folder into Paseo. The sidebar entry follows the app language: **Repos** in English and **仓库** in Simplified Chinese.
 
 - Compact repository list with search, provider and local-state filters.
@@ -29,7 +31,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.2.3
+paseo plugin add git:zwmmm/git-workspace --ref v1.2.4
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
@@ -53,7 +55,7 @@ The plugin runs with Paseo's trusted plugin permissions, including access to hos
 See the [latest release](https://github.com/zwmmm/git-workspace/releases/latest) for update details. For an installation from GitHub:
 
 ```sh
-paseo plugin update git-workspace --ref v1.2.3
+paseo plugin update git-workspace --ref v1.2.4
 ```
 
 ## Development
