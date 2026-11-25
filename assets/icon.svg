@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64" fill="none">
-  <title>Git workspace</title>
-  <rect width="64" height="64" rx="14" fill="#22211F"/>
-  <path d="M13 23V19a4 4 0 0 1 4-4h10l6 6h14a4 4 0 0 1 4 4v21a4 4 0 0 1-4 4H17a4 4 0 0 1-4-4V23Z" stroke="#EDE8DF" stroke-width="3" stroke-linejoin="round"/>
-  <path d="M27 31v13m0-6h7a6 6 0 0 0 6-6v-1" stroke="#DE805C" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="27" cy="30" r="3.25" fill="#DE805C"/>
-  <circle cx="27" cy="44" r="3.25" fill="#DE805C"/>
-  <circle cx="40" cy="30" r="3.25" fill="#DE805C"/>
-</svg>
