@@ -6,6 +6,7 @@ import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { messages } from "./client/messages";
 import { WorkspaceBrowserSurface } from "./client/workspace-browser";
 import { GitWorkspaceSettings } from "./client/git-workspace-settings";
+import { registerProjectHostRpc } from "./client/project-host-rpc";
 
 function ReposSidebarItem({
   currentScreen,
@@ -74,8 +75,10 @@ export default function contribute(client: PluginClientContext) {
       openScreen({ screenId: "git-workspace" });
     },
   });
+  const removeProjectHostRpc = registerProjectHostRpc(client);
 
   return () => {
+    removeProjectHostRpc();
     removeSurface();
     removeSidebar();
     removeSettings();

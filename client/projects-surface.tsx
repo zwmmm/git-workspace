@@ -1,22 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { useHosts, usePaseo, useRpc, useTranslation, type PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { getPaseoClient, useHosts, usePaseo, useRpc, useTranslation, type PluginHostSummary, type PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { Icon, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
 import { DeleteProjectRpc, GetProjectDeletionResultRpc, InspectProjectDeletionRpc, readProjectState, type ProjectItem } from "../shared/projects";
+import { findProjectHostRpc } from "./project-host-rpc";
 import { projectMessages } from "./project-messages";
 
 type Result = { id: string; name: string; status: "removed" | "skipped" | "failed" | "unknown" | "partial"; message?: string };
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: PluginSurfaceProps & {
+type ProjectsProps = PluginSurfaceProps & {
   tabs?: ReactNode; onBusyChange?: (busy: boolean) => void;
-}) {
-  const paseo = usePaseo(), inspectDeletion = useRpc(InspectProjectDeletionRpc), remove = useRpc(DeleteProjectRpc);
-  const getDeletionResult = useRpc(GetProjectDeletionResultRpc);
-  const toast = useToast();
+};
+
+export function ProjectsSurface(props: ProjectsProps) {
+  const { host } = props;
   const hosts = useHosts();
-  const hostStatus = hosts.find(item => item.serverId === host.id)?.status;
-  const offline = hostStatus !== undefined && hostStatus !== "online";
+  const [selection, setSelection] = useState<{ origin: string; target: string }>();
+  const currentHost = hosts.find(item => item.serverId === host.id) ??
+    { serverId: host.id, label: host.label, status: "online" as const };
+  const options = [currentHost, ...hosts.filter(item => item.serverId !== host.id)];
+  const target = (selection?.origin === host.id && options.find(item => item.serverId === selection.target)) || currentHost;
+  return <HostProjectsSurface key={JSON.stringify([host.id, target.serverId, target.status === "online"])} {...props}
+    host={{ id: target.serverId, label: target.label }} hosts={options} remote={target.serverId !== host.id}
+    offline={target.status !== "online"}
+    onHostChange={id => setSelection({ origin: host.id, target: id })} />;
+}
+
+function HostProjectsSurface({ theme, host, layout, tabs, onBusyChange, hosts, remote, offline, onHostChange }: ProjectsProps & {
+  hosts: readonly PluginHostSummary[]; remote: boolean; offline: boolean; onHostChange: (id: string) => void;
+}) {
+  const paseo = usePaseo();
+  const inspectLocal = useRpc(InspectProjectDeletionRpc), removeLocal = useRpc(DeleteProjectRpc);
+  const resultLocal = useRpc(GetProjectDeletionResultRpc);
+  const remoteRpc = useRef<Awaited<ReturnType<typeof findProjectHostRpc>>>(null);
+  const toast = useToast();
+  const resolvePaseo = useCallback(() => remote ? getPaseoClient(host.id) : paseo, [remote, host.id, paseo]);
   const offlineRef = useRef(offline); offlineRef.current = offline;
   const { t } = useTranslation(projectMessages);
   const [projects, setProjects] = useState<ProjectItem[]>([]), [selected, setSelected] = useState(new Set<string>());
@@ -36,12 +55,12 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
   const current = () => alive.current && scope.current === context;
 
   const load = useCallback(async () => {
-    if (lock.current || inFlight.current === context) return;
+    if (offlineRef.current || lock.current || inFlight.current === context) return;
     inFlight.current = context;
     const id = ++request.current;
     setLoading(true);
     try {
-      const rows = await readProjectState(paseo);
+      const rows = await readProjectState(resolvePaseo());
       if (!current() || id !== request.current) return;
       setProjects(rows); setError("");
       setResults(old => old.map(result => result.status === "unknown" && !rows.some(p => p.id === result.id)
@@ -53,24 +72,42 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
       if (inFlight.current === context) inFlight.current = null;
       if (current() && id === request.current) setLoading(false);
     }
-  }, [context]);
+  }, [context, resolvePaseo]);
   const checkCapability = useCallback(async () => {
+    if (offlineRef.current) return;
+    const input = { hostId: host.id, projectIds: [] };
     try {
-      await inspectDeletion({ hostId: host.id, projectIds: [] });
-      if (current()) { setCanDelete(true); setActionError(""); }
+      let rpc: Awaited<ReturnType<typeof findProjectHostRpc>> = null;
+      if (remote) {
+        rpc = await findProjectHostRpc(host.id);
+        if (!current() || offlineRef.current) return;
+      }
+      if (rpc) await rpc(InspectProjectDeletionRpc, input);
+      else {
+        // The daemon can verify the selected ID even if the page did not resolve its installation.
+        try { await inspectLocal(input); }
+        catch (cause) {
+          if (!remote) throw cause;
+          throw new Error(t("remoteDeletionUnavailable"));
+        }
+      }
+      if (current()) { remoteRpc.current = rpc; setCanDelete(true); setActionError(""); }
     } catch (cause) {
-      if (current()) { setCanDelete(false); setActionError(errorText(cause)); }
+      if (current()) { remoteRpc.current = null; setCanDelete(false); setActionError(errorText(cause)); }
     }
-  }, [context, inspectDeletion]);
+  }, [context, inspectLocal, remote]);
   useEffect(() => {
     alive.current = true; lock.current = false; stop.current = false;
     setProjects([]); setSelected(new Set()); setSearch(""); setError(""); setConfirmation(null);
     setBusy(null); setResults([]); setStopping(false); setCanDelete(false); setActionError("");
+    if (offline) { setLoading(false); return; }
     void load(); void checkCapability();
-    const unsubscribe = paseo.projects.subscribe(() => { void load(); });
+    let unsubscribe: (() => void) | undefined;
+    try { unsubscribe = resolvePaseo().projects.subscribe(() => { void load(); }); }
+    catch { /* The list request reports a broken connection. */ }
     const timer = setInterval(() => { void load(); }, 15_000);
-    return () => { alive.current = false; stop.current = true; request.current++; unsubscribe(); clearInterval(timer); };
-  }, [context, load, checkCapability]);
+    return () => { alive.current = false; stop.current = true; request.current++; unsubscribe?.(); clearInterval(timer); };
+  }, [context, load, checkCapability, offline, resolvePaseo]);
   useEffect(() => { onBusyChange?.(busy !== null); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
 
   const visible = projects.filter(p => `${p.name} ${p.path}`.toLowerCase().includes(search.toLowerCase()));
@@ -82,15 +119,18 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
 
   async function prepare() {
     if (lock.current || !selected.size || offlineRef.current || !canDelete) return;
+    const rpc = remoteRpc.current;
     lock.current = true; setBusy("inspect"); setActionError("");
     try {
-      const result = await inspectDeletion({ hostId: host.id, projectIds: [...selected] });
+      const input = { hostId: host.id, projectIds: [...selected] };
+      const result = rpc ? await rpc(InspectProjectDeletionRpc, input) : await inspectLocal(input);
       if (current()) setConfirmation(result.projects);
     } catch (cause) { if (current()) setActionError(errorText(cause)); }
     finally { if (current()) { lock.current = false; setBusy(null); } }
   }
   async function execute() {
-    if (lock.current || !confirmation?.length || offlineRef.current) return;
+    if (lock.current || !confirmation?.length || offlineRef.current || !canDelete) return;
+    const rpc = remoteRpc.current;
     const targets = confirmation;
     lock.current = true; stop.current = false; setStopping(false); setBusy("delete");
     setConfirmation(null); setSelected(new Set()); setResults([]); setActionError("");
@@ -103,12 +143,15 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
         setProgress({ done: output.length, total: targets.length, name: target.name });
         const operationId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         try {
-          const result = await remove({ hostId: host.id, projectId: target.id, snapshot: target.snapshot,
-            operationId });
+          const input = { hostId: host.id, projectId: target.id, snapshot: target.snapshot, operationId };
+          const result = rpc ? await rpc(DeleteProjectRpc, input) : await removeLocal(input);
           output.push({ id: target.id, name: target.name, ...result });
         } catch (cause) {
-          let recovered: Awaited<ReturnType<typeof getDeletionResult>> = null;
-          try { if (current()) recovered = await getDeletionResult({ hostId: host.id, operationId }); } catch { /* Read-only recovery failed; retain the uncertain result. */ }
+          let recovered: Awaited<ReturnType<typeof resultLocal>> = null;
+          try {
+            const input = { hostId: host.id, operationId };
+            if (current()) recovered = rpc ? await rpc(GetProjectDeletionResultRpc, input) : await resultLocal(input);
+          } catch { /* Read-only recovery failed; retain the uncertain result. */ }
           output.push({ id: target.id, name: target.name, ...(recovered ?? { status: "unknown" as const, message: errorText(cause) }) });
         }
       }
@@ -144,6 +187,11 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
     danger: { color: theme.colors.statusDanger },
     search: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: "transparent", backgroundColor: theme.colors.surface2 },
     input: { flex: 1, minWidth: 0, minHeight: 32, paddingVertical: 5, paddingHorizontal: 0, fontSize: 14, lineHeight: 20, color: theme.colors.foreground, backgroundColor: "transparent", ...(Platform.OS === "web" ? { outlineWidth: 0 } : {}) },
+    hostOptions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 },
+    hostLabel: { fontSize: 12, color: theme.colors.foregroundMuted, marginRight: 4 },
+    hostChip: { minHeight: 28, paddingHorizontal: 10, borderRadius: 14, flexDirection: "row", alignItems: "center", gap: 6 },
+    activeHostChip: { backgroundColor: theme.colors.surface2 },
+    activeHostName: { color: theme.colors.foreground, fontWeight: "500" },
     focused: { borderColor: theme.colors.border, ...(Platform.OS === "web" ? {
       outlineColor: theme.colors.accent, outlineWidth: 2, outlineOffset: 1, outlineStyle: "solid" as const,
     } : {}) },
@@ -188,6 +236,22 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
             onChangeText={value => { setSearch(value); setSelected(new Set()); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
             placeholderTextColor={theme.colors.foregroundMuted} style={styles.input} autoCapitalize="none" autoCorrect={false} />
         </View>
+        <View style={styles.hostOptions}>
+          <Text style={styles.hostLabel}>{t("hostFilter")}</Text>
+          {hosts.map(item => {
+            const active = item.serverId === host.id;
+            const unavailable = item.status !== "online";
+            const switchingDisabled = !!busy || confirmation !== null;
+            return <Pressable key={item.serverId} accessibilityRole="button"
+              accessibilityLabel={unavailable ? `${item.label} · ${t("offline")}` : item.label}
+              accessibilityState={{ selected: active, disabled: switchingDisabled }} disabled={switchingDisabled}
+              onPress={() => { if (!active) onHostChange(item.serverId); }}
+              style={[styles.hostChip, active && styles.activeHostChip]}>
+              <Text style={[styles.muted, active && styles.activeHostName]}>{item.label}</Text>
+              {unavailable ? <Text style={styles.muted}>{t("offlineShort")}</Text> : null}
+            </Pressable>;
+          })}
+        </View>
         <View style={styles.heading}>
           <View style={styles.actions}>
             {checkbox(t("selectAll"), allSelected, selected.size > 0 && !allSelected, disabled || !eligible.length,
@@ -201,7 +265,8 @@ export function ProjectsSurface({ theme, host, layout, tabs, onBusyChange }: Plu
       {busy === "delete" ? <View style={[styles.result, styles.heading]}><Text style={styles.muted}>{t("deleting", progress)}</Text>
         {button(t("stop"), () => { stop.current = true; setStopping(true); }, { disabled: stopping, text: stopping ? t("stopping") : t("stop") })}</View> : null}
       <ScrollView style={{ flex: 1 }}>
-        {loading && !projects.length ? <View style={styles.empty}><ActivityIndicator color={theme.colors.foregroundMuted} /></View> : !visible.length ? error ? null :
+        {offline ? <View style={styles.empty}><Text style={styles.muted}>{t("offlineProjects")}</Text></View> :
+          loading && !projects.length ? <View style={styles.empty}><ActivityIndicator color={theme.colors.foregroundMuted} /></View> : !visible.length ? error ? null :
           <View style={styles.empty}><Text style={styles.muted}>{t(search ? "noMatches" : "empty")}</Text></View> : visible.map(project => (
             <View key={project.id} style={[styles.row, selected.has(project.id) && styles.selected]}>
               {checkbox(t("selectProject", { name: project.name, path: project.path }), selected.has(project.id), false,

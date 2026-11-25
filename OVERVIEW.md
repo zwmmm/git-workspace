@@ -18,9 +18,9 @@ Choose a directory on the connected host and open it as a workspace. Import uses
 
 ## Manage Paseo projects
 
-Switch to **Projects / 项目** to search and select projects registered on the selected host, including empty projects. Delete selected projects from the top toolbar. Associated workspaces and sessions are archived; local source directories, worktree files, and remote repositories are kept. Projects with running tasks, services, terminals, or archival in progress must be stopped or closed first. A toast summarizes batch results, and a batch can stop after the current request.
+Switch to **Projects / 项目** and use the host chips below search to view one host at a time. Search and select projects, including empty projects, then delete them from the top toolbar. Associated workspaces and sessions are archived; local source directories, worktree files, and remote repositories are kept. Projects with running tasks, services, terminals, or archival in progress must be stopped or closed first. A toast summarizes batch results, and a batch can stop after the current request.
 
-Listing uses the existing SDK connection. Removal requires the official `paseo` CLI on the daemon host; its host identity and the confirmed project state are checked before deletion. Unknown results are not automatically retried.
+Listing uses the selected host's SDK connection. Removal requires this version of Git Workspace and the official `paseo` CLI on that host. The host identity and confirmed project state are checked before deletion. Unknown results are not automatically retried.
 
 ## Setup and data access
 

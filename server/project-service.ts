@@ -15,9 +15,17 @@ const unconfirmed = new Set<string>();
 const projectKey = (hostId: string, projectId: string) => JSON.stringify([hostId, projectId]);
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-async function verifyDaemon(hostId: string, run: RunCli) {
+async function readDaemon(run: RunCli) {
   const { stdout } = await run(["daemon", "status", "--json"]);
-  const daemon = daemonSchema.parse(JSON.parse(stdout));
+  return daemonSchema.parse(JSON.parse(stdout));
+}
+
+export async function getProjectHost() {
+  return { hostId: (await readDaemon(runCli)).serverId };
+}
+
+async function verifyDaemon(hostId: string, run: RunCli) {
+  const daemon = await readDaemon(run);
   if (daemon.serverId !== hostId) throw new Error("CLI 主机与当前主机不一致，未执行删除");
   const [major, minor, patch] = daemon.daemonVersion.split(/[.-]/).map(Number);
   if (!(major > 0 || minor > 17 || (minor === 17 && patch >= 4)))

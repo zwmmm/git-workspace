@@ -2,13 +2,21 @@ import React from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-const state = vi.hoisted(() => ({ paseo: null as unknown, inspect: vi.fn(), remove: vi.fn(), result: vi.fn(), toast: vi.fn() }));
+const state = vi.hoisted(() => ({ paseo: null as unknown, remotePaseo: null as unknown, inspect: vi.fn(), remove: vi.fn(), result: vi.fn(), toast: vi.fn() }));
 vi.mock("react-native", () => ({ View: "View", Text: "Text", Pressable: "Pressable", ActivityIndicator: "ActivityIndicator", StyleSheet: { create: (x: unknown) => x }, Platform: { OS: "web" } }));
 vi.mock("@getpaseo/plugin/client", () => ({
   usePaseo: () => state.paseo,
-  useHosts: () => [{ serverId: "host", status: "online" }, { serverId: "other", status: "online" }],
+  getPaseoClient: (serverId: string) => {
+    if (serverId !== "other") throw new Error("Unexpected host");
+    return state.remotePaseo;
+  },
+  useHosts: () => [
+    { serverId: "host", label: "Mac", status: "online" },
+    { serverId: "other", label: "Mac mini", status: "online" },
+    { serverId: "offline", label: "Dev", status: "offline" },
+  ],
   useRpc: (c: { name: string }) => c.name === "projects.delete" ? state.remove : c.name === "projects.deletion-result" ? state.result : state.inspect,
-  defineTranslations: (x: unknown) => x,
+  defineTranslations: (x: object) => ({ ...x, message: (key: string) => key }),
   useTranslation: (m: { resources: { "zh-CN": Record<string, string> } }) => ({ t: (key: string, values: Record<string, unknown> = {}) =>
     (m.resources["zh-CN"][key] || key).replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(values[name])) }),
 }));
@@ -17,6 +25,7 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({ useToast: () => ({ show: state.to
     { Content: ({ children }: { children: React.ReactNode }) => children }),
 }));
 import { ProjectsSurface } from "../client/projects-surface";
+import contribute from "../index.client";
 let renderer: ReactTestRenderer;
 let descriptors: { projectId: string; projectDisplayName: string; projectRootPath: string; projectKind: string }[];
 const props = { theme: { colors: { surface0: "#20201e", surface2: "#2d2c2a", foreground: "#eeece8", foregroundMuted: "#aaa7a1", border: "#303030", accent: "#df805d", statusDanger: "#e99b90" } }, host: { id: "host", label: "Mac" }, layout: { compact: false, platform: "web" } } as unknown as PluginSurfaceProps;
@@ -29,7 +38,10 @@ beforeEach(() => {
   state.paseo = { projects: { list: vi.fn(async () => ({ projects: descriptors })), subscribe: () => () => {} },
     workspaces: { list: vi.fn(async () => ({ entries: [], pageInfo })) },
     agents: { list: vi.fn(async () => ({ entries: [], pageInfo })) }, terminals: { list: vi.fn(async () => ({ entries: [] })) } };
-  state.inspect.mockImplementation(async ({ projectIds }: { projectIds: string[] }) => ({ projects: descriptors.filter(p => projectIds.includes(p.projectId)).map(p => ({ id: p.projectId, name: p.projectDisplayName, path: p.projectRootPath, workspaceCount: 0, agentCount: 0, blocked: null, snapshot: p.projectId })) }));
+  state.inspect.mockImplementation(async ({ hostId, projectIds }: { hostId: string; projectIds: string[] }) => {
+    if (hostId !== "host") throw new Error("CLI host mismatch");
+    return { projects: descriptors.filter(p => projectIds.includes(p.projectId)).map(p => ({ id: p.projectId, name: p.projectDisplayName, path: p.projectRootPath, workspaceCount: 0, agentCount: 0, blocked: null, snapshot: p.projectId })) };
+  });
   state.remove.mockImplementation(async ({ projectId }: { projectId: string }) => { descriptors = descriptors.filter(p => p.projectId !== projectId); return { status: "removed" }; });
 });
 afterEach(async () => { if (renderer) await act(async () => renderer.unmount()); });
@@ -37,6 +49,66 @@ async function mount() { await act(async () => { renderer = create(<ProjectsSurf
 function button(label: string) { return renderer.root.findAllByType("Pressable" as never).find(n => n.props.accessibilityLabel === label)!; }
 async function press(label: string) { await act(async () => { const b = button(label); expect(b).toBeDefined(); expect(b.props.disabled).not.toBe(true); await b.props.onPress(); }); }
 const text = () => JSON.stringify(renderer.toJSON());
+
+test("a host capsule switches project reads and clears the previous host's selection", async () => {
+  const local = state.paseo as { projects: { list: () => unknown } };
+  state.remotePaseo = { ...local, projects: { ...local.projects, list: async () => ({
+    projects: [{ projectId: "0", projectDisplayName: "remote", projectRootPath: "/Remote/remote", projectKind: "git" }],
+  }) } };
+  await mount();
+  expect(button("Mac")?.props.accessibilityState.selected).toBe(true);
+  await press("全选");
+  await press("Mac mini");
+  expect(button("Mac mini").props.accessibilityState.selected).toBe(true);
+  expect(text()).toContain("/Remote/remote");
+  expect(text()).not.toContain("/Projects/demo");
+  expect(button("删除所选").props.disabled).toBe(true);
+  await press("Dev · 主机已离线");
+  expect(text()).not.toContain("/Remote/remote");
+  expect(button("删除所选").props.disabled).toBe(true);
+});
+
+test("deleting a project on another host uses that host's plugin transport", async () => {
+  state.remotePaseo = state.paseo;
+  const rpc = vi.fn(async (contract: { name: string }, input: { hostId?: string; projectIds?: string[] }) => {
+    if (contract.name === "projects.host") return { hostId: "other" };
+    if (input.hostId !== "other") throw new Error("Wrong deletion target");
+    if (contract.name === "projects.inspect-deletion") return state.inspect({ ...input, hostId: "host" });
+    if (contract.name === "projects.delete") return { status: "removed" };
+    throw new Error("Unexpected RPC");
+  });
+  const register = () => () => {};
+  const dispose = contribute({ rpc, addScreen: register, addSidebarHeaderItem: register,
+    addSettingsScreen: register, addCommandCenterItem: register, addSlashCommand: register } as never);
+  try {
+    await mount();
+    await press("Mac mini");
+    await press("选择项目 demo /Projects/demo");
+    await press("删除所选");
+    expect(text()).toContain("主机：Mac mini");
+    await press("确认删除");
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ name: "projects.delete" }),
+      expect.objectContaining({ hostId: "other", projectId: "0" }));
+    expect(state.remove).not.toHaveBeenCalled();
+  } finally { await dispose(); }
+});
+
+test("uses the current plugin connection when it verifies the selected host despite differing screen metadata", async () => {
+  state.remotePaseo = state.paseo;
+  state.inspect.mockImplementation(async ({ hostId, projectIds }: { hostId: string; projectIds: string[] }) => {
+    if (hostId !== "other") throw new Error("CLI host mismatch");
+    return { projects: projectIds.length ? [{
+      id: "0", name: "demo", path: "/Projects/demo", workspaceCount: 0, agentCount: 0, blocked: null, snapshot: "0",
+    }] : [] };
+  });
+  await mount();
+  await press("Mac mini");
+  expect(button("选择项目 demo /Projects/demo").props.disabled).toBe(false);
+  await press("选择项目 demo /Projects/demo");
+  await press("删除所选");
+  await press("确认删除");
+  expect(state.remove).toHaveBeenCalledWith(expect.objectContaining({ hostId: "other", projectId: "0" }));
+});
 
 test("projects including empty ones are selectable immediately without a manage mode", async () => {
   await mount();

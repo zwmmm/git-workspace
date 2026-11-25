@@ -61,6 +61,11 @@ export async function readProjectState(paseo: PaseoApi): Promise<ProjectItem[]> 
   }).sort((a, b) => a.name.localeCompare(b.name) || a.path.localeCompare(b.path) || a.id.localeCompare(b.id));
 }
 
+export const GetProjectHostRpc = defineRpc({
+  name: "projects.host",
+  input: z.object({}),
+  output: z.object({ hostId: z.string() }),
+});
 export const InspectProjectDeletionRpc = defineRpc({
   name: "projects.inspect-deletion",
   input: z.object({ hostId: z.string(), projectIds: z.array(z.string()) }),

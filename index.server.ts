@@ -11,8 +11,8 @@ import {
   ImportFolderRpc,
 } from "./shared/contracts";
 import { readOperation, runOperation } from "./server/operations";
-import { DeleteProjectRpc, GetProjectDeletionResultRpc, InspectProjectDeletionRpc, type ProjectDeletionResultSchema } from "./shared/projects";
-import { deleteProject, inspectProjectDeletion } from "./server/project-service";
+import { DeleteProjectRpc, GetProjectDeletionResultRpc, GetProjectHostRpc, InspectProjectDeletionRpc, type ProjectDeletionResultSchema } from "./shared/projects";
+import { deleteProject, getProjectHost, inspectProjectDeletion } from "./server/project-service";
 import {
   cloneAndCreateWorkspace,
   parseGitLabHost,
@@ -119,6 +119,7 @@ export default function contribute(server: PluginServerContext) {
       importFolder(path, paseo, operationId)
     )
   );
+  server.handle(GetProjectHostRpc, getProjectHost);
   server.handle(InspectProjectDeletionRpc, (input, { paseo }) =>
     inspectProjectDeletion(paseo, input)
   );

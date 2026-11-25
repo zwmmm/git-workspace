@@ -32,7 +32,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.3.2
+paseo plugin add git:zwmmm/git-workspace --ref v1.4.0
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
@@ -47,11 +47,11 @@ Folder import uses the original host directory. It does not copy files, initiali
 
 ## Manage Paseo projects
 
-The **Projects / 项目** tab lists all projects registered on the selected host, including projects without workspaces. Search by name or path, select rows or all search results, then use **Delete selected** at the top. The confirmation summarizes affected workspaces. Removing a project archives its associated workspaces and sessions while keeping source directories, worktree files, and remote repositories.
+The **Projects / 项目** tab opens on the current host. Use the host chips below search to view one host's projects at a time, including projects without workspaces. Search by name or path, select rows or all search results, then use **Delete selected** at the top. The confirmation names the host and summarizes affected workspaces. Removing a project archives its associated workspaces and sessions while keeping source directories, worktree files, and remote repositories.
 
 Projects with running tasks, setup, services, terminals, or archival in progress cannot be selected. Close terminals and stop tasks before removing those projects. Search, refresh, tab changes, and host changes clear selection. A batch runs sequentially and can stop after the current project. A toast summarizes successful deletions and any skipped, failed, or unconfirmed results; unconfirmed operations are not automatically retried.
 
-Listing uses Paseo's SDK connection. Removal requires the official `paseo` CLI on the daemon host. Before each deletion the plugin verifies that the CLI targets the selected host and that the project and workspace membership still match the confirmation. Switching hosts stops later requests; a request already submitted may finish on its original host.
+Listing uses the selected host's Paseo SDK connection. Removal requires this version of Git Workspace and the official `paseo` CLI on that host. Before each deletion the plugin verifies that the CLI targets the selected host and that the project and workspace membership still match the confirmation. Switching hosts stops later requests; a request already submitted may finish on its original host.
 
 ## Data access
 
@@ -64,7 +64,7 @@ The plugin runs with Paseo's trusted plugin permissions, including access to hos
 See the [latest release](https://github.com/zwmmm/git-workspace/releases/latest) for update details. For an installation from GitHub:
 
 ```sh
-paseo plugin update git-workspace --ref v1.3.2
+paseo plugin update git-workspace --ref v1.4.0
 ```
 
 ## Development

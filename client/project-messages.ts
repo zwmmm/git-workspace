@@ -4,6 +4,8 @@ export const projectMessages = defineTranslations({ resources: {
   en: {
     projects: "Projects", refresh: "Refresh", selectAll: "Select all", clear: "Clear selection",
     search: "Search projects by name or path", selected: "{{count}} selected", total: "{{count}} projects",
+    hostFilter: "Host", offlineShort: "Offline", offlineProjects: "Connect to this host to view its projects.",
+    remoteDeletionUnavailable: "Project deletion is unavailable on this host. Check the Git Workspace plugin and Paseo CLI there.",
     deleteSelected: "Delete selected", cancel: "Cancel", confirmDelete: "Delete",
     confirmTitle: "Delete {{count}} projects?", confirmImpact: "{{workspaces}} workspaces and {{agents}} sessions are associated with these projects; unarchived workspaces and sessions will be archived.",
     preserve: "Local code, worktree files and remote repositories are kept.",
@@ -17,6 +19,8 @@ export const projectMessages = defineTranslations({ resources: {
   "zh-CN": {
     projects: "项目", refresh: "刷新", selectAll: "全选", clear: "取消选择",
     search: "搜索项目名称或路径", selected: "已选 {{count}} 个项目", total: "{{count}} 个项目",
+    hostFilter: "Host", offlineShort: "离线", offlineProjects: "连接此主机后可查看项目。",
+    remoteDeletionUnavailable: "此主机暂不支持删除项目，请检查该主机上的 Git Workspace 插件和 Paseo CLI。",
     deleteSelected: "删除所选", cancel: "取消", confirmDelete: "确认删除",
     confirmTitle: "删除选中的 {{count}} 个项目？", confirmImpact: "关联 {{workspaces}} 个工作区、{{agents}} 个会话；未归档的工作区及会话将归档。",
     preserve: "本地代码、工作树文件和远程仓库保留。",
