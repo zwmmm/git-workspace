@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   import: vi.fn(),
   auth: vi.fn(),
   navigate: vi.fn(),
+  groups: vi.fn(),
 }));
 vi.mock("react-native", () => ({
   View: "View",
@@ -32,6 +33,7 @@ vi.mock("@getpaseo/plugin/client", () => ({
       "git.browse-folders": state.browse,
       "git.import-folder": state.import,
       "git.check-auth": state.auth,
+      "git.list-gitlab-groups": state.groups,
     }[c.name]),
   useSettings: () => ({
     status: "ready",
@@ -110,6 +112,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.list.mockResolvedValue({ repos: [repo], auth, isSyncing: false });
   state.auth.mockResolvedValue(auth);
+  state.groups.mockResolvedValue({
+    groups: [{ id: 42, name: "tools", fullPath: "team/tools" }],
+  });
   state.create.mockResolvedValue({
     workspaceId: "ws",
     title: "demo",
@@ -332,4 +337,69 @@ test("an uncertain repository result permits changing the name and creating a di
   expect(state.remote).toHaveBeenLastCalledWith(
     expect.objectContaining({ name: "another" })
   );
+});
+
+test("GitLab creation can select a group while GitHub keeps its personal account flow", async () => {
+  state.remote.mockResolvedValue({
+    repo: { ...repo, provider: "gitlab", fullName: "team/tools/demo" },
+    uncertain: false,
+  });
+  await mount();
+  await press("新建仓库");
+  expect(
+    renderer.root
+      .findAllByType("SettingsSelect" as never)
+      .filter((n) => n.props.label === "创建位置")
+  ).toHaveLength(0);
+  await press("创建到 GitLab");
+  const select = renderer.root
+    .findAllByType("SettingsSelect" as never)
+    .find((n) => n.props.label === "创建位置")!;
+  expect(select.props.options).toContainEqual({
+    label: "team/tools",
+    value: "42",
+  });
+  await act(async () => select.props.onValueChange("42"));
+  const input = renderer.root
+    .findAllByType("TextInput" as never)
+    .find((n) => n.props.accessibilityLabel === "仓库名称")!;
+  await act(async () => input.props.onChangeText("demo"));
+  await press("创建并打开");
+  expect(state.remote).toHaveBeenCalledWith(
+    expect.objectContaining({
+      provider: "gitlab",
+      namespaceId: 42,
+      namespacePath: "team/tools",
+    })
+  );
+});
+
+test("GitLab creation waits for group discovery and a provider switch clears the selected group", async () => {
+  let finish!: (x: unknown) => void;
+  state.groups.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    })
+  );
+  await mount();
+  await press("新建仓库");
+  await press("创建到 GitLab");
+  const input = renderer.root
+    .findAllByType("TextInput" as never)
+    .find((n) => n.props.accessibilityLabel === "仓库名称")!;
+  await act(async () => input.props.onChangeText("demo"));
+  expect(button("创建并打开").props.disabled).toBe(true);
+  await act(async () =>
+    finish({ groups: [{ id: 42, name: "tools", fullPath: "team/tools" }] })
+  );
+  const select = renderer.root
+    .findAllByType("SettingsSelect" as never)
+    .find((n) => n.props.label === "创建位置")!;
+  await act(async () => select.props.onValueChange("42"));
+  await press("创建到 GitHub");
+  await press("创建并打开");
+  expect(state.remote).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: "github" })
+  );
+  expect(state.remote.mock.calls[0][0].namespaceId).toBeUndefined();
 });

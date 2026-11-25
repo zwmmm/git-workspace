@@ -30,8 +30,10 @@ import {
   CreateWorkspaceRpc,
   ImportFolderRpc,
   ListReposRpc,
+  ListGitLabGroupsRpc,
   TriggerSyncRpc,
   type AuthStatus,
+  type GitLabGroup,
   type RepoItem,
 } from "../shared/contracts";
 import { providerIcons } from "./provider-icons";
@@ -83,6 +85,12 @@ export function GitWorkspaceSurface({
     browseFolders = useRpc(BrowseFoldersRpc),
     importFolder = useRpc(ImportFolderRpc),
     checkAuth = useRpc(CheckAuthRpc);
+  const listGitLabGroups = useRpc(ListGitLabGroupsRpc);
+  const [groups, setGroups] = useState<GitLabGroup[]>([]);
+  const [namespace, setNamespace] = useState("personal");
+  const [groupsLoading, setGroupsLoading] = useState(false),
+    [groupsError, setGroupsError] = useState("");
+  const groupRequest = useRef(0);
   const [focusedInput, setFocusedInput] = useState<string>();
   const [width, setWidth] = useState(layout.compact ? 400 : 1000);
   const compact = width < 680;
@@ -211,6 +219,37 @@ export function GitWorkspaceSurface({
     }, 2000);
     return () => clearInterval(timer);
   }, [syncing, load]);
+
+  const loadGroups = useCallback(async () => {
+    const key = context,
+      id = ++groupRequest.current;
+    setGroupsLoading(true);
+    setGroupsError("");
+    try {
+      const result = await listGitLabGroups({ gitlabUrl });
+      if (isCurrent(key) && id === groupRequest.current)
+        setGroups(result.groups);
+    } catch (error) {
+      if (isCurrent(key) && id === groupRequest.current)
+        setGroupsError(errorText(error));
+    } finally {
+      if (isCurrent(key) && id === groupRequest.current)
+        setGroupsLoading(false);
+    }
+  }, [context, gitlabUrl, listGitLabGroups]);
+  useEffect(() => {
+    setNamespace("personal");
+    setGroups([]);
+    setGroupsError("");
+    if (form?.kind === "new" && newProvider === "gitlab") void loadGroups();
+    else {
+      groupRequest.current++;
+      setGroupsLoading(false);
+    }
+    return () => {
+      groupRequest.current++;
+    };
+  }, [form?.kind, newProvider, loadGroups]);
 
   const manualSync = async () => {
     if (syncLock.current || !settings) return;
@@ -344,6 +383,18 @@ export function GitWorkspaceSurface({
         !formAuth[newProvider]?.user)
     )
       return;
+    const selectedGroup = groups.find(
+      (group) => String(group.id) === namespace
+    );
+    if (
+      form.kind === "new" &&
+      newProvider === "gitlab" &&
+      !remoteRepo &&
+      (groupsLoading ||
+        groupsError ||
+        (namespace !== "personal" && !selectedGroup))
+    )
+      return;
     lock.current = true;
     setBusy(form.kind);
     setFormError("");
@@ -369,6 +420,12 @@ export function GitWorkspaceSurface({
           const result = await createRepository({
             operationId: `${formOperation.current}:remote`,
             expectedOwner: formAuth[newProvider]!.user!,
+            ...(newProvider === "gitlab" && selectedGroup
+              ? {
+                  namespaceId: selectedGroup.id,
+                  namespacePath: selectedGroup.fullPath,
+                }
+              : {}),
             gitlabUrl,
             cloneDir,
             provider: newProvider,
@@ -886,10 +943,15 @@ export function GitWorkspaceSurface({
                       {button(
                         value === "github" ? "GitHub" : "GitLab",
                         () => {
+                          if (newProvider !== value)
+                            formOperation.current = newOperationId();
                           setNewProvider(value);
                           setFormError("");
                         },
                         {
+                          accessibilityLabel: `创建到 ${
+                            value === "github" ? "GitHub" : "GitLab"
+                          }`,
                           ghost: newProvider !== value,
                           disabled: !!busy || !!remoteRepo,
                         }
@@ -897,6 +959,49 @@ export function GitWorkspaceSurface({
                     </View>
                   ))}
                 </View>
+                {newProvider === "gitlab" ? (
+                  <View style={styles.field}>
+                    <SettingsSelect<string>
+                      label="创建位置"
+                      value={namespace}
+                      options={[
+                        {
+                          label: groupsLoading ? "加载分组中…" : "个人空间",
+                          value: "personal",
+                        },
+                        ...groups.map((group) => ({
+                          label: group.fullPath,
+                          value: String(group.id),
+                        })),
+                        ...(namespace !== "personal" &&
+                        !groups.some((group) => String(group.id) === namespace)
+                          ? [
+                              {
+                                label: "分组不可用，请重新选择",
+                                value: namespace,
+                              },
+                            ]
+                          : []),
+                      ]}
+                      onValueChange={(value) => {
+                        setNamespace(value);
+                        setFormError("");
+                        formOperation.current = newOperationId();
+                      }}
+                      disabled={
+                        !!busy || !!remoteRepo || groupsLoading || !!groupsError
+                      }
+                    />
+                    {groupsError ? (
+                      <View style={styles.field}>
+                        <Text style={styles.error}>{groupsError}</Text>
+                        {button("重试加载分组", loadGroups, {
+                          disabled: !!busy || groupsLoading,
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 <View style={styles.field}>
                   <Text style={styles.label}>仓库名称</Text>
                   <TextInput
@@ -1081,6 +1186,13 @@ export function GitWorkspaceSurface({
                   (form?.kind === "new" &&
                     !remoteRepo &&
                     (!name.trim() ||
+                      (newProvider === "gitlab" &&
+                        (groupsLoading ||
+                          !!groupsError ||
+                          (namespace !== "personal" &&
+                            !groups.some(
+                              (group) => String(group.id) === namespace
+                            )))) ||
                       authRefreshing ||
                       !newAuth?.loggedIn ||
                       !newAuth.user)) ||

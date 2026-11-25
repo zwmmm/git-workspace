@@ -15,8 +15,15 @@ beforeEach(async () => {
   const script = `#!/usr/bin/env node
 const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(process.env.REPOS_TEST_LOG,JSON.stringify(a)+'\\n');
 if(a.some(x=>x.startsWith('projects?'))&&process.env.REPOS_TEST_FAIL==='invalid-json'){console.log(JSON.stringify({message:'unexpected'}));process.exit()}
+if(a.includes('graphql')){
+ const q=a.find(x=>x.startsWith('query='))||'';
+ if(process.env.REPOS_TEST_FAIL==='groups-error'){console.log(JSON.stringify({errors:[{message:'permission unavailable'}]}));process.exit()}
+ if(q.includes('group(fullPath:')){console.log(JSON.stringify({data:{group:{id:'gid://gitlab/Group/42',name:'tools',fullPath:'team/tools',userPermissions:{createProjects:process.env.REPOS_TEST_FAIL!=='group-denied'}}}}));process.exit()}
+ const second=q.includes('after:');
+ console.log(JSON.stringify({data:{groups:{nodes:second?[{id:'gid://gitlab/Group/42',name:'tools',fullPath:'team/tools',userPermissions:{createProjects:true}}]:[{id:'gid://gitlab/Group/5',name:'root',fullPath:'team',userPermissions:{createProjects:false}}],pageInfo:{hasNextPage:!second,endCursor:second?null:'next'}}}}));process.exit()
+}
 if(a.includes('user')){console.log(JSON.stringify({login:'alice',username:'alice',id:7}));process.exit()}
-if(a.includes('POST')){if(process.env.REPOS_TEST_FAIL==='conflict'){console.error('HTTP 422: name already exists');process.exit(1)}if(process.env.REPOS_TEST_FAIL==='yes'){console.error('network timeout');process.exit(1)}console.log(JSON.stringify({full_name:'alice/demo',name:'demo',html_url:'https://github.com/alice/demo',clone_url:'https://github.com/alice/demo.git',ssh_url:'git@github.com:alice/demo.git',default_branch:'trunk',private:true,path_with_namespace:'alice/demo',web_url:'https://git.example.com/alice/demo',ssh_url_to_repo:'git@git.example.com:alice/demo.git',http_url_to_repo:'https://git.example.com/alice/demo.git',visibility:'private'}));process.exit()}
+if(a.includes('POST')){if(process.env.REPOS_TEST_FAIL==='conflict'){console.error('HTTP 422: name already exists');process.exit(1)}if(process.env.REPOS_TEST_FAIL==='yes'){console.error('network timeout');process.exit(1)}console.log(JSON.stringify({full_name:'alice/demo',name:'demo',html_url:'https://github.com/alice/demo',clone_url:'https://github.com/alice/demo.git',ssh_url:'git@github.com:alice/demo.git',default_branch:'trunk',private:true,path_with_namespace:a.includes('namespace_id=42')?'team/tools/demo':'alice/demo',web_url:'https://git.example.com/'+(a.includes('namespace_id=42')?'team/tools/demo':'alice/demo'),ssh_url_to_repo:'git@git.example.com:'+(a.includes('namespace_id=42')?'team/tools/demo':'alice/demo')+'.git',http_url_to_repo:'https://git.example.com/'+(a.includes('namespace_id=42')?'team/tools/demo':'alice/demo')+'.git',visibility:'private'}));process.exit()}
 if(process.env.REPOS_TEST_FAIL==='yes'){console.log(JSON.stringify({full_name:'alice/demo',name:'demo',html_url:'https://github.com/alice/demo',clone_url:'https://github.com/alice/demo.git',ssh_url:'git@github.com:alice/demo.git',default_branch:'trunk',private:true}));process.exit()}
 console.error('404');process.exit(1);
 `;
@@ -252,4 +259,83 @@ test("malformed provider JSON is a source failure rather than a successful empty
   await expect(
     fetchGitLabRepos(undefined, "https://git.example.com", root)
   ).rejects.toThrow("无效的仓库列表");
+});
+
+test("GitLab group discovery follows pagination and returns only permitted complete paths", async () => {
+  const groups = await service.listGitLabGroups(settings());
+  expect(groups).toEqual([{ id: 42, name: "tools", fullPath: "team/tools" }]);
+  const calls = (await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8"))
+    .trim()
+    .split("\n")
+    .map((x) => JSON.parse(x) as string[]);
+  expect(calls.filter((a) => a.includes("graphql"))).toHaveLength(2);
+});
+
+test("a selected GitLab group sets namespace_id and uses the nested group path", async () => {
+  const result = await service.createRepository(
+    {
+      provider: "gitlab",
+      name: "demo",
+      isPublic: false,
+      namespaceId: 42,
+      namespacePath: "team/tools",
+    },
+    settings()
+  );
+  expect(result.repo.fullName).toBe("team/tools/demo");
+  expect(result.repo.httpUrl).toBe(
+    "https://git.example.com/team/tools/demo.git"
+  );
+  expect(result.repo.localPath).toBe(
+    path.join(root, "clones/git.example.com/team/tools/demo")
+  );
+  const calls = (await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8"))
+    .trim()
+    .split("\n")
+    .map((x) => JSON.parse(x) as string[]);
+  expect(calls.find((a) => a.includes("POST"))).toContain("namespace_id=42");
+});
+
+test("lost group creation permission rejects the write without creating a personal repository", async () => {
+  process.env.REPOS_TEST_FAIL = "group-denied";
+  await expect(
+    service.createRepository(
+      {
+        provider: "gitlab",
+        name: "demo",
+        isPublic: false,
+        namespaceId: 42,
+        namespacePath: "team/tools",
+      },
+      settings()
+    )
+  ).rejects.toThrow("分组");
+  expect(await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8")).not.toContain(
+    "POST"
+  );
+});
+
+test("GitLab group query errors remain errors instead of an empty permission list", async () => {
+  process.env.REPOS_TEST_FAIL = "groups-error";
+  await expect(service.listGitLabGroups(settings())).rejects.toThrow(
+    "permission unavailable"
+  );
+});
+
+test("a renamed GitLab group must be selected again instead of silently changing the target path", async () => {
+  await expect(
+    service.createRepository(
+      {
+        provider: "gitlab",
+        name: "demo",
+        isPublic: false,
+        namespaceId: 42,
+        namespacePath: "team/old-tools",
+      },
+      settings()
+    )
+  ).rejects.toThrow("分组已变化");
+  expect(await fs.readFile(process.env.REPOS_TEST_LOG!, "utf8")).not.toContain(
+    "POST"
+  );
 });

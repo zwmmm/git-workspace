@@ -3,6 +3,7 @@ import { gitWorkspaceSettings } from "./shared/settings";
 import {
   CheckAuthRpc,
   ListReposRpc,
+  ListGitLabGroupsRpc,
   TriggerSyncRpc,
   CreateWorkspaceRpc,
   CreateRepositoryRpc,
@@ -18,6 +19,7 @@ import {
 import { repoCacheService } from "./server/cache-service";
 import {
   createRepository,
+  listGitLabGroups,
   browseFolders,
   importFolder,
 } from "./server/repository-service";
@@ -74,6 +76,11 @@ export default function contribute(server: PluginServerContext) {
     )
       throw new Error("仓库设置已变化，请刷新后重试");
   };
+  server.handle(ListGitLabGroupsRpc, async ({ gitlabUrl }) => {
+    const config = await readSettings();
+    ensureTarget({ provider: "gitlab", gitlabUrl }, config);
+    return { groups: await listGitLabGroups(config) };
+  });
   server.handle(CreateWorkspaceRpc, async (input, { paseo }) => {
     const config = await readSettings();
     ensureTarget(input, config);

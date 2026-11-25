@@ -110,6 +110,8 @@ export const CreateRepositoryRpc = defineRpc({
   input: z.object({
     operationId: z.string().min(1),
     expectedOwner: z.string().min(1),
+    namespaceId: z.number().int().positive().optional(),
+    namespacePath: z.string().min(1).optional(),
     gitlabUrl: z.string().optional(),
     cloneDir: z.string().optional(),
     provider: z.enum(["github", "gitlab"]),
@@ -136,4 +138,16 @@ export const ImportFolderRpc = defineRpc({
     operationId: z.string().min(1),
   }),
   output: CreateWorkspaceRpc.output,
+});
+
+export const GitLabGroupSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string(),
+  fullPath: z.string().min(1),
+});
+export type GitLabGroup = z.infer<typeof GitLabGroupSchema>;
+export const ListGitLabGroupsRpc = defineRpc({
+  name: "git.list-gitlab-groups",
+  input: z.object({ gitlabUrl: z.string() }),
+  output: z.object({ groups: z.array(GitLabGroupSchema) }),
 });

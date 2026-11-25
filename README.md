@@ -4,7 +4,7 @@ Browse GitHub and GitLab repositories, create a remote repository, or import a f
 
 - Compact repository list with search, provider and local-state filters.
 - Clone and create a workspace using the default settings, with per-repository options when needed.
-- Create a GitHub or GitLab repository under the signed-in personal account. Repositories are private unless you enable public visibility.
+- Create a GitHub repository under the signed-in personal account, or choose a personal namespace or permitted group for GitLab. Repositories are private unless you enable public visibility.
 - Import a folder from the connected host. Existing workspaces for the same directory are opened again.
 - Open the repository browser from the sidebar, Command Center, or `/git`.
 
@@ -15,7 +15,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.1.0
+paseo plugin add git:zwmmm/git-workspace --ref v1.2.0
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
@@ -24,7 +24,7 @@ This installs directly from GitHub. It does not require or imply a listing in th
 
 Open the plugin settings to configure the clone root (`~/Projects` by default), SSH/HTTPS, Local/Worktree, and GitLab instance URL. Repositories are stored under `<clone root>/<host>/<owner>/<repository>`.
 
-A new remote repository uses the signed-in personal account and includes an initial README. Once created, it is cloned and opened with the default workspace settings. If cloning fails, retry continues from the existing remote repository.
+A new remote repository includes an initial README. GitHub uses the signed-in personal account. GitLab adds a creation-location selector with the personal namespace and groups where the current user can create projects, including subgroups. Group paths are displayed in full and permissions are checked again before creation. Once created, it is cloned and opened with the default workspace settings. If cloning fails, retry continues from the existing remote repository.
 
 Folder import uses the original host directory. It does not copy files, initialize Git, or upload anything. On a mobile or remote client, browse selects directories on the connected daemon host.
 

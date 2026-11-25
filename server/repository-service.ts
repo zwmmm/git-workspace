@@ -1,9 +1,10 @@
+import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import type { RepoItem } from "../shared/contracts";
+import type { GitLabGroup, RepoItem } from "../shared/contracts";
 import type { GitWorkspaceSettings } from "../shared/settings";
 import { parseGitLabHost, resolveCloneDir } from "./git-service";
 
@@ -23,12 +24,78 @@ async function api(
   return JSON.parse(stdout);
 }
 
+const groupNodeSchema = z.object({
+  id: z.string().regex(/^gid:\/\/gitlab\/Group\/\d+$/),
+  name: z.string(),
+  fullPath: z.string().min(1),
+  userPermissions: z.object({ createProjects: z.boolean() }),
+});
+const groupFields = "id name fullPath userPermissions { createProjects }";
+
+async function groupQuery(settings: GitWorkspaceSettings, query: string) {
+  const result = await api("gitlab", parseGitLabHost(settings.gitlabUrl), [
+    "graphql",
+    "--raw-field",
+    `query=${query}`,
+  ]);
+  if (Array.isArray(result.errors) && result.errors.length) {
+    throw new Error(
+      result.errors
+        .map(
+          (error: { message?: string }) =>
+            error.message || "GitLab 分组查询失败"
+        )
+        .join("; ")
+    );
+  }
+  return result.data;
+}
+
+export async function listGitLabGroups(
+  settings: GitWorkspaceSettings
+): Promise<GitLabGroup[]> {
+  const groups: GitLabGroup[] = [];
+  let cursor: string | null = null;
+  const seen = new Set<string>();
+  do {
+    const data = await groupQuery(
+      settings,
+      `query { groups(first: 100${
+        cursor ? `, after: ${JSON.stringify(cursor)}` : ""
+      }) { nodes { ${groupFields} } pageInfo { hasNextPage endCursor } } }`
+    );
+    const page = z
+      .object({
+        nodes: z.array(groupNodeSchema),
+        pageInfo: z.object({
+          hasNextPage: z.boolean(),
+          endCursor: z.string().nullable(),
+        }),
+      })
+      .parse(data?.groups);
+    for (const node of page.nodes) {
+      const id = Number(node.id.split("/").pop());
+      if (!Number.isSafeInteger(id) || id <= 0)
+        throw new Error("GitLab 分组 ID 无效");
+      if (node.userPermissions.createProjects)
+        groups.push({ id, name: node.name, fullPath: node.fullPath });
+    }
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    if (page.pageInfo.hasNextPage && (!cursor || seen.has(cursor)))
+      throw new Error("GitLab 分组分页信息无效");
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return groups.sort((a, b) => a.fullPath.localeCompare(b.fullPath));
+}
+
 export async function createRepository(
   input: {
     provider: "github" | "gitlab";
     name: string;
     isPublic: boolean;
     expectedOwner?: string;
+    namespaceId?: number;
+    namespacePath?: string;
   },
   settings: GitWorkspaceSettings
 ): Promise<{ repo: RepoItem; uncertain: boolean }> {
@@ -50,7 +117,31 @@ export async function createRepository(
   if (!owner) throw new Error("无法识别已登录账户，请重新登录后重试");
   if (input.expectedOwner && input.expectedOwner !== owner)
     throw new Error("登录账户已变化，请重新打开表单确认");
-  const fullName = `${owner}/${name}`;
+  let namespace = owner;
+  if (input.namespaceId !== undefined || input.namespacePath !== undefined) {
+    if (
+      input.provider !== "gitlab" ||
+      !input.namespaceId ||
+      !input.namespacePath
+    )
+      throw new Error("请选择有效的 GitLab 分组");
+    const data = await groupQuery(
+      settings,
+      `query { group(fullPath: ${JSON.stringify(
+        input.namespacePath
+      )}) { ${groupFields} } }`
+    );
+    const parsed = groupNodeSchema.safeParse(data?.group);
+    if (
+      !parsed.success ||
+      Number(parsed.data.id.split("/").pop()) !== input.namespaceId ||
+      parsed.data.fullPath !== input.namespacePath ||
+      !parsed.data.userPermissions.createProjects
+    )
+      throw new Error("分组已变化或没有创建项目的权限，请重新选择");
+    namespace = parsed.data.fullPath;
+  }
+  const fullName = `${namespace}/${name}`;
   const localPath = path.join(
     resolveCloneDir(settings.cloneDir),
     host,
@@ -98,6 +189,9 @@ export async function createRepository(
             `visibility=${input.isPublic ? "public" : "private"}`,
             "--field",
             "initialize_with_readme=true",
+            ...(input.namespaceId
+              ? ["--field", `namespace_id=${input.namespaceId}`]
+              : []),
           ]
     );
   } catch (error) {
