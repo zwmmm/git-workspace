@@ -4,7 +4,7 @@ import type {
 } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { messages } from "./client/messages";
-import { GitWorkspaceSurface } from "./client/git-workspace-surface";
+import { WorkspaceBrowserSurface } from "./client/workspace-browser";
 import { GitWorkspaceSettings } from "./client/git-workspace-settings";
 
 function ReposSidebarItem({
@@ -25,7 +25,7 @@ export default function contribute(client: PluginClientContext) {
   const removeSurface = client.addScreen({
     id: "git-workspace",
     title: messages.message("repos"),
-    Component: GitWorkspaceSurface,
+    Component: WorkspaceBrowserSurface,
   });
 
   // 2. 注册侧边栏入口

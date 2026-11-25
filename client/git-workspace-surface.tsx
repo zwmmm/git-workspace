@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -69,7 +69,9 @@ export function GitWorkspaceSurface({
   host,
   layout,
   navigation,
-}: PluginSurfaceProps) {
+  tabs,
+  onBusyChange,
+}: PluginSurfaceProps & { tabs?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
   const { t } = useTranslation(messages);
   const toast = useToast();
   const settingsState = useSettings(gitWorkspaceSettings);
@@ -132,6 +134,7 @@ export function GitWorkspaceSurface({
     [browsing, setBrowsing] = useState(false);
   const [optionIsolation, setOptionIsolation] = useState(isolation),
     [optionProtocol, setOptionProtocol] = useState(protocol);
+  useEffect(() => { onBusyChange?.(busy !== null); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   const lock = useRef(false),
     syncLock = useRef(false),
     request = useRef(0),
@@ -573,7 +576,12 @@ export function GitWorkspaceSurface({
               }
             : {}),
         },
-        search: { flexDirection: "row", alignItems: "center", gap: 8 },
+        search: {
+          flexDirection: "row", alignItems: "center", gap: 8,
+          paddingHorizontal: 12, borderRadius: 6, borderWidth: 1,
+          borderColor: "transparent", backgroundColor: theme.colors.surface2,
+        },
+        searchInput: { paddingHorizontal: 0, backgroundColor: "transparent", borderWidth: 0 },
         filters: {
           flexDirection: "row",
           justifyContent: "space-between",
@@ -726,7 +734,7 @@ export function GitWorkspaceSurface({
     >
       <View style={styles.header}>
         <View style={styles.heading}>
-          <Text style={styles.title}>{t("repos")}</Text>
+          {tabs ?? <Text style={styles.title}>{t("repos")}</Text>}
           <View style={styles.actions}>
             {button(syncing ? "同步中" : "同步", manualSync, {
               icon: "RefreshCw",
@@ -749,7 +757,7 @@ export function GitWorkspaceSurface({
             })}
           </View>
         </View>
-        <View style={styles.search}>
+        <View style={[styles.search, focusedInput === "search" && styles.inputFocused]}>
           <Icon name="Search" size={16} color={theme.colors.foregroundMuted} />
           <TextInput
             accessibilityLabel="搜索仓库"
@@ -757,7 +765,7 @@ export function GitWorkspaceSurface({
             placeholderTextColor={theme.colors.foregroundMuted}
             style={[
               styles.input,
-              focusedInput === "search" && styles.inputFocused,
+              styles.searchInput,
             ]}
             onFocus={() => setFocusedInput("search")}
             onBlur={() =>

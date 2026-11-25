@@ -68,6 +68,7 @@ vi.mock("@getpaseo/plugin/client/react-native", () => ({
   useToast: () => ({ show: () => {}, error: () => {} }),
 }));
 import { GitWorkspaceSurface } from "../client/git-workspace-surface";
+import { WorkspaceBrowserSurface } from "../client/workspace-browser";
 const repo = {
   id: "github:alice/demo",
   name: "demo",
@@ -445,4 +446,14 @@ test("the namespace menu supports keyboard selection and dismisses without chang
       .props.onToggle({ newState: "closed" })
   );
   expect(trigger.props["aria-expanded"]).toBe(false);
+});
+
+test("repository workspace creation prevents switching away and losing the pending operation", async () => {
+  let finish!: (value: unknown) => void;
+  state.create.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => { renderer = create(<WorkspaceBrowserSurface {...props} />); });
+  await act(async () => { void button("克隆并创建 alice/demo").props.onPress(); });
+  expect(button("项目").props.disabled).toBe(true);
+  await act(async () => finish({ workspaceId: "ws", title: "demo", localPath: repo.localPath }));
+  expect(button("项目").props.disabled).toBe(false);
 });

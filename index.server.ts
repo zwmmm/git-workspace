@@ -10,7 +10,9 @@ import {
   BrowseFoldersRpc,
   ImportFolderRpc,
 } from "./shared/contracts";
-import { runOperation } from "./server/operations";
+import { readOperation, runOperation } from "./server/operations";
+import { DeleteProjectRpc, GetProjectDeletionResultRpc, InspectProjectDeletionRpc, type ProjectDeletionResultSchema } from "./shared/projects";
+import { deleteProject, inspectProjectDeletion } from "./server/project-service";
 import {
   cloneAndCreateWorkspace,
   parseGitLabHost,
@@ -116,6 +118,15 @@ export default function contribute(server: PluginServerContext) {
     runOperation(`import:${operationId}`, { path }, () =>
       importFolder(path, paseo, operationId)
     )
+  );
+  server.handle(InspectProjectDeletionRpc, (input, { paseo }) =>
+    inspectProjectDeletion(paseo, input)
+  );
+  server.handle(DeleteProjectRpc, (input, { paseo }) =>
+    runOperation(`project:${input.hostId}:${input.operationId}`, input, () => deleteProject(paseo, input))
+  );
+  server.handle(GetProjectDeletionResultRpc, (input) =>
+    readOperation<import("zod").infer<typeof ProjectDeletionResultSchema>>(`project:${input.hostId}:${input.operationId}`)
   );
   return () => {
     repoCacheService.destroy();

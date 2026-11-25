@@ -16,6 +16,12 @@ Repositories are private by default and include a README. After creation, the pl
 
 Choose a directory on the connected host and open it as a workspace. Import uses the existing files without copying them, initializing Git, or uploading them. If a workspace already uses that directory, the plugin opens it again. Browsing from a mobile or remote client still reads directories on the daemon host.
 
+## Manage Paseo projects
+
+Switch to **Projects / 项目** to search and select projects registered on the selected host, including empty projects. Delete selected projects from the top toolbar. Associated workspaces and sessions are archived; local source directories, worktree files, and remote repositories are kept. Projects with running tasks, services, terminals, or archival in progress must be stopped or closed first. A toast summarizes batch results, and a batch can stop after the current request.
+
+Listing uses the existing SDK connection. Removal requires the official `paseo` CLI on the daemon host; its host identity and the confirmed project state are checked before deletion. Unknown results are not automatically retried.
+
 ## Setup and data access
 
 The Paseo app and daemon require version 0.17.4 or later. GitHub and GitLab operations need Git and an authenticated `gh` or `glab` on the daemon host. Folder import does not require a provider account. Plugin settings control the GitLab instance, clone root, SSH/HTTPS protocol, and Local/Worktree default.

@@ -9,6 +9,7 @@ Browse GitHub and GitLab repositories, create a remote repository, or import a f
 - Create a GitHub repository under the signed-in personal account, or choose a personal namespace or permitted group for GitLab. Repositories are private unless you enable public visibility.
 - Import a folder from the connected host. Existing workspaces for the same directory are opened again.
 - Open the repository browser from the sidebar, Command Center, or `/git`.
+- Switch to **Projects / 项目** to search registered Paseo projects, select multiple projects, and remove them while keeping local files.
 
 ## Screenshots
 
@@ -31,7 +32,7 @@ Paseo 0.17.4 or later on both the app and daemon. The daemon host needs Git and,
 ## Install from GitHub
 
 ```sh
-paseo plugin add git:zwmmm/git-workspace --ref v1.2.4
+paseo plugin add git:zwmmm/git-workspace --ref v1.3.0
 ```
 
 This installs directly from GitHub. It does not require or imply a listing in the Paseo plugin registry.
@@ -44,6 +45,14 @@ A new remote repository includes an initial README. GitHub uses the signed-in pe
 
 Folder import uses the original host directory. It does not copy files, initialize Git, or upload anything. On a mobile or remote client, browse selects directories on the connected daemon host.
 
+## Manage Paseo projects
+
+The **Projects / 项目** tab lists all projects registered on the selected host, including projects without workspaces. Search by name or path, select rows or all search results, then use **Delete selected** at the top. The confirmation summarizes affected workspaces. Removing a project archives its associated workspaces and sessions while keeping source directories, worktree files, and remote repositories.
+
+Projects with running tasks, setup, services, terminals, or archival in progress cannot be selected. Close terminals and stop tasks before removing those projects. Search, refresh, tab changes, and host changes clear selection. A batch runs sequentially and can stop after the current project. A toast summarizes successful deletions and any skipped, failed, or unconfirmed results; unconfirmed operations are not automatically retried.
+
+Listing uses Paseo's SDK connection. Removal requires the official `paseo` CLI on the daemon host. Before each deletion the plugin verifies that the CLI targets the selected host and that the project and workspace membership still match the confirmation. Switching hosts stops later requests; a request already submitted may finish on its original host.
+
 ## Data access
 
 Repository discovery and creation use `gh` and `glab` on the daemon host, contacting GitHub or the configured GitLab instance. Git clone uses the selected protocol. Repository metadata is cached in `~/.paseo/git-workspace-cache.json` on that host. The plugin does not collect a separate access token or install CLI tools automatically.
@@ -55,7 +64,7 @@ The plugin runs with Paseo's trusted plugin permissions, including access to hos
 See the [latest release](https://github.com/zwmmm/git-workspace/releases/latest) for update details. For an installation from GitHub:
 
 ```sh
-paseo plugin update git-workspace --ref v1.2.4
+paseo plugin update git-workspace --ref v1.3.0
 ```
 
 ## Development

@@ -22,3 +22,8 @@ export async function runOperation<T>(
   operations.set(id, { input: fingerprint, result });
   return result;
 }
+
+export async function readOperation<T>(id: string): Promise<T | null> {
+  const operation = operations.get(id);
+  return operation ? await operation.result as T : null;
+}
