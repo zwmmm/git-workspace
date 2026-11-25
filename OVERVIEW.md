@@ -1,28 +1,11 @@
 # Git workspace
 
-Git workspace lets you search, clone, and launch Paseo workspaces directly from your GitHub and GitLab repositories. It integrates repository discovery into the sidebar, ⌘K command palette, and composer slash commands.
+Browse GitHub and GitLab repositories in a compact list, clone them into Paseo workspaces, create a new repository under your signed-in personal account, or import a directory from the connected host. Open it from Repos in the sidebar, the Command Center, or `/git`.
 
-## How it works
+New remote repositories are private by default and include a README. Creation uses the host's authenticated account, then clones the repository and opens a workspace with your default settings. Folder import uses the existing directory without copying files, initializing Git, or uploading it. When a workspace already uses that directory, it opens that workspace.
 
-The plugin checks your local Git credentials using the GitHub CLI (`gh`) and GitLab CLI (`glab`), or authenticates with custom GitLab instances. It indexes accessible repositories and lets you clone them into your local workspace directory. Once cloned, you can open them immediately as standard Paseo workspaces using either isolated git worktrees or local checkouts.
+Both the Paseo app and daemon require version 0.17.4 or later. GitHub and GitLab operations require Git and an authenticated `gh` or `glab` on the daemon host. Folder import does not require a provider account. Configure the GitLab instance, clone root, SSH/HTTPS protocol, and Local/Worktree default in plugin settings.
 
-## Setup
+The plugin contacts GitHub or the configured GitLab instance through those CLI tools and uses Git to clone repositories. Metadata is cached at `~/.paseo/git-workspace-cache.json` on the host. It does not request another access token, install CLI tools automatically, or send prompts or repository contents to an agent provider. On a mobile or remote client, folder browsing reads directories on the connected host.
 
-For GitHub repositories, install and authenticate the GitHub CLI (`gh auth login`).
-For GitLab repositories, install and authenticate the GitLab CLI (`glab auth login`) or configure your self-hosted GitLab URL in settings.
-
-## Configuration
-
-Open Settings → Plugins → Git workspace to configure:
-
-- Clone directory: Destination path where repositories are cloned (defaults to `~/Projects`).
-- Clone protocol: Choose SSH or HTTPS for git operations.
-- Default workspace isolation: Choose between worktree isolation or local checkout.
-- GitLab instance URL: Custom domain when using self-hosted GitLab instances.
-
-## Features
-
-- Sidebar panel: Browse all GitHub and GitLab repositories with real-time search, clone status, and branch information.
-- Command palette: Press ⌘K and search for "Git" or "Clone" to open the repository browser.
-- Slash command: Type `/git` in the composer to quickly search and clone repositories.
-- Worktree and local support: Open repositories directly as isolated worktrees or standard local workspaces.
+Discovery currently reads up to 30 repositories per provider. Creating a repository in an organization or group, publishing an existing folder, and selecting a remote branch are not supported by the creation form.

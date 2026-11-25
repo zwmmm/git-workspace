@@ -1,14 +1,14 @@
 {
   "id": "git-workspace",
   "name": "Git workspace",
-  "description": "Search, clone, and create Paseo workspaces from GitHub and GitLab repositories",
+  "description": "Browse, create, clone, and import repositories into Paseo workspaces",
   "icon": "assets/icon.png",
   "media": [
     "assets/git-workspace-surface.png",
     "assets/git-workspace-settings.png"
   ],
   "requirements": {
-    "paseo": ">=0.8.0"
+    "paseo": ">=0.17.4"
   },
-  "build": [["npm", "install", "--no-fund", "--no-audit"]]
+  "build": [["npm", "ci", "--ignore-scripts", "--no-fund", "--no-audit"]]
 }

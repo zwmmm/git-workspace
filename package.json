@@ -1,17 +1,20 @@
 {
   "name": "git-workspace",
   "private": true,
-  "version": "1.0.0",
-  "description": "Search, clone, and create Paseo workspaces from GitHub and GitLab repositories",
+  "version": "1.1.0",
+  "description": "Browse, create, clone, and import repositories into Paseo workspaces",
   "author": "zwmmm",
   "license": "MIT",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
-    "index.client.ts",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "LICENSES/",
+    "assets/",
     "index.client.tsx",
     "index.server.ts",
-    "index.server.tsx",
     "client/",
     "server/",
     "shared/"
@@ -32,5 +35,9 @@
     "typescript": "^5.9.3",
     "vitest": "4.0.15",
     "zod": "^4.4.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zwmmm/git-workspace.git"
   }
 }
