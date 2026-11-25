@@ -1,9 +1,21 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { gitWorkspaceSettings } from "./shared/settings";
-import { CheckAuthRpc, ListReposRpc, TriggerSyncRpc, CreateWorkspaceRpc, CreateRepositoryRpc, BrowseFoldersRpc, ImportFolderRpc } from "./shared/contracts";
+import {
+  CheckAuthRpc,
+  ListReposRpc,
+  TriggerSyncRpc,
+  CreateWorkspaceRpc,
+  CreateRepositoryRpc,
+  BrowseFoldersRpc,
+  ImportFolderRpc,
+} from "./shared/contracts";
 import { cloneAndCreateWorkspace } from "./server/git-service";
 import { repoCacheService } from "./server/cache-service";
-import { createRepository, browseFolders, importFolder } from "./server/repository-service";
+import {
+  createRepository,
+  browseFolders,
+  importFolder,
+} from "./server/repository-service";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(gitWorkspaceSettings);
@@ -20,26 +32,47 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(ListReposRpc, async (input) => {
     await ready;
-    return repoCacheService.getRepos({ ...input, ...await readSettings() });
+    return repoCacheService.getRepos({ ...input, ...(await readSettings()) });
   });
   server.handle(TriggerSyncRpc, async () => {
     await ready;
     const config = await readSettings();
-    const result = await repoCacheService.syncAll(config.gitlabUrl, config.cloneDir);
-    const { repos } = await repoCacheService.getRepos({ ...config, provider: "all" });
-    return { ...result, success: result.errors.length === 0, count: repos.length };
+    const result = await repoCacheService.syncAll(
+      config.gitlabUrl,
+      config.cloneDir
+    );
+    const { repos } = await repoCacheService.getRepos({
+      ...config,
+      provider: "all",
+    });
+    return {
+      ...result,
+      success: result.errors.length === 0,
+      count: repos.length,
+    };
   });
   server.handle(CreateWorkspaceRpc, async (input, { paseo }) => {
     const config = await readSettings();
-    return cloneAndCreateWorkspace({ ...input, gitlabUrl: config.gitlabUrl, cloneDir: config.cloneDir }, paseo);
+    return cloneAndCreateWorkspace(
+      { ...input, gitlabUrl: config.gitlabUrl, cloneDir: config.cloneDir },
+      paseo
+    );
   });
   server.handle(CreateRepositoryRpc, async (input) => {
     const config = await readSettings();
     const result = await createRepository(input, config);
-    void repoCacheService.syncAll(config.gitlabUrl, config.cloneDir).catch(console.error);
+    void repoCacheService
+      .syncAll(config.gitlabUrl, config.cloneDir)
+      .catch(console.error);
     return result;
   });
-  server.handle(BrowseFoldersRpc, async ({ path }) => browseFolders(path || (await readSettings()).cloneDir));
-  server.handle(ImportFolderRpc, ({ path }, { paseo }) => importFolder(path, paseo));
-  return () => { repoCacheService.destroy(); };
+  server.handle(BrowseFoldersRpc, async ({ path }) =>
+    browseFolders(path || (await readSettings()).cloneDir)
+  );
+  server.handle(ImportFolderRpc, ({ path }, { paseo }) =>
+    importFolder(path, paseo)
+  );
+  return () => {
+    repoCacheService.destroy();
+  };
 }

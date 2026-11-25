@@ -1,17 +1,38 @@
-import type { PluginClientContext } from "@getpaseo/plugin/client";
+import type {
+  PluginClientContext,
+  PluginSidebarItemProps,
+} from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
+import { messages } from "./client/messages";
 import { GitWorkspaceSurface } from "./client/git-workspace-surface";
 import { GitWorkspaceSettings } from "./client/git-workspace-settings";
 
+function ReposSidebarItem({
+  currentScreen,
+  openScreen,
+}: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="FolderGit2"
+      active={currentScreen?.screenId === "git-workspace"}
+      onPress={() => openScreen({ screenId: "git-workspace" })}
+    />
+  );
+}
+
 export default function contribute(client: PluginClientContext) {
   // 1. 注册主界面
-  const removeSurface = client.addSurface("git-workspace", GitWorkspaceSurface);
+  const removeSurface = client.addScreen({
+    id: "git-workspace",
+    title: messages.message("repos"),
+    Component: GitWorkspaceSurface,
+  });
 
   // 2. 注册侧边栏入口
-  const removeSidebar = client.addSidebarItem({
+  const removeSidebar = client.addSidebarHeaderItem({
     id: "git-workspace",
-    title: "Git 仓库",
-    icon: "FolderGit2",
-    surface: "git-workspace",
+    title: messages.message("repos"),
+    Component: ReposSidebarItem,
   });
 
   // 3. 注册设置界面
@@ -28,9 +49,18 @@ export default function contribute(client: PluginClientContext) {
     title: "从 GitHub / GitLab 克隆创建工作区",
     icon: "FolderGit2",
     context: "global",
-    keywords: ["git", "github", "gitlab", "clone", "repo", "workspace", "项目", "克隆"],
-    onSelect({ openSurface }) {
-      openSurface("git-workspace");
+    keywords: [
+      "git",
+      "github",
+      "gitlab",
+      "clone",
+      "repo",
+      "workspace",
+      "项目",
+      "克隆",
+    ],
+    onSelect({ openScreen }) {
+      openScreen({ screenId: "git-workspace" });
     },
   });
 
@@ -40,8 +70,8 @@ export default function contribute(client: PluginClientContext) {
     description: "从 GitHub / GitLab 搜索克隆并创建工作区",
     argumentHint: "",
     context: "workspace",
-    onSubmit({ openSurface }) {
-      openSurface("git-workspace");
+    onSubmit({ openScreen }) {
+      openScreen({ screenId: "git-workspace" });
     },
   });
 

@@ -1,487 +1,921 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
+  Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import {
   useRpc,
   useSettings,
+  useTranslation,
   type PluginSurfaceProps,
 } from "@getpaseo/plugin/client";
-import { useToast } from "@getpaseo/plugin/client/react-native";
+import {
+  Icon,
+  Modal,
+  ScrollView,
+  SettingsSelect,
+  TextInput,
+  useToast,
+} from "@getpaseo/plugin/client/ui";
 import { gitWorkspaceSettings } from "../shared/settings";
 import {
+  BrowseFoldersRpc,
+  CheckAuthRpc,
+  CreateRepositoryRpc,
+  CreateWorkspaceRpc,
+  ImportFolderRpc,
   ListReposRpc,
   TriggerSyncRpc,
-  CreateWorkspaceRpc,
-  type RepoItem,
   type AuthStatus,
+  type RepoItem,
 } from "../shared/contracts";
+import { providerIcons } from "./provider-icons";
+import { messages } from "./messages";
 
-function formatSyncTime(ts?: number): string {
-  if (!ts || ts === 0) return "未同步";
-  const diffSec = Math.floor((Date.now() - ts) / 1000);
-  if (diffSec < 10) return "刚刚";
-  if (diffSec < 60) return `${diffSec} 秒前`;
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} 分钟前`;
-  const diffHour = Math.floor(diffMin / 60);
-  return `${diffHour} 小时前`;
+type Provider = "github" | "gitlab";
+type Form =
+  | { kind: "new" }
+  | { kind: "import" }
+  | { kind: "options"; repo: RepoItem };
+type FolderList = {
+  path: string;
+  parent: string;
+  directories: { name: string; path: string }[];
+};
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+function accountText(auth?: AuthStatus) {
+  if (!auth || auth.checking) return "检查中";
+  if (!auth.installed) return "CLI 未安装";
+  if (auth.loggedIn) return auth.user ? `@${auth.user}` : "已连接";
+  return auth.error && !/not logged|未登录|login|auth login/i.test(auth.error)
+    ? "检查失败"
+    : "未登录";
 }
 
-export function GitWorkspaceSurface({ theme, layout }: PluginSurfaceProps) {
+export function GitWorkspaceSurface({
+  theme,
+  host,
+  layout,
+  navigation,
+}: PluginSurfaceProps) {
+  const { t } = useTranslation(messages);
   const toast = useToast();
   const settingsState = useSettings(gitWorkspaceSettings);
-  const gitlabUrl =
-    settingsState.status === "ready" ? settingsState.values.gitlabUrl : "https://gitlab.com";
-  const cloneDir =
-    settingsState.status === "ready" ? settingsState.values.cloneDir : "~/Projects";
-  const cloneProtocol =
-    settingsState.status === "ready" ? settingsState.values.cloneProtocol : "ssh";
-  const defaultIsolation =
-    settingsState.status === "ready" ? settingsState.values.defaultIsolation : "worktree";
-
-  const listRepos = useRpc(ListReposRpc);
-  const triggerSync = useRpc(TriggerSyncRpc);
-  const createWorkspace = useRpc(CreateWorkspaceRpc);
-
-  const [provider, setProvider] = useState<"all" | "github" | "gitlab">("all");
-  const [search, setSearch] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const settings =
+    settingsState.status === "ready" ? settingsState.values : null;
+  const gitlabUrl = settings?.gitlabUrl || "https://gitlab.com";
+  const cloneDir = settings?.cloneDir || "~/Projects";
+  const protocol = settings?.cloneProtocol || "ssh";
+  const isolation = settings?.defaultIsolation || "worktree";
+  const listRepos = useRpc(ListReposRpc),
+    sync = useRpc(TriggerSyncRpc),
+    createWorkspace = useRpc(CreateWorkspaceRpc);
+  const createRepository = useRpc(CreateRepositoryRpc),
+    browseFolders = useRpc(BrowseFoldersRpc),
+    importFolder = useRpc(ImportFolderRpc),
+    checkAuth = useRpc(CheckAuthRpc);
+  const [width, setWidth] = useState(layout.compact ? 400 : 1000);
+  const compact = width < 680;
+  const [provider, setProvider] = useState<"all" | Provider>("all");
+  const [localFilter, setLocalFilter] = useState<"all" | "local" | "remote">(
+    "all"
+  );
+  const [search, setSearch] = useState(""),
+    [query, setQuery] = useState("");
   const [repos, setRepos] = useState<RepoItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>(undefined);
-  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<{
+  const [loading, setLoading] = useState(true),
+    [syncing, setSyncing] = useState(false);
+  const [syncedAt, setSyncedAt] = useState<number>();
+  const [auth, setAuth] = useState<{
     github?: AuthStatus;
     gitlab?: AuthStatus;
   }>({});
+  const [loadError, setLoadError] = useState("");
+  const [rowError, setRowError] = useState<{ id: string; text: string }>();
+  const [form, setForm] = useState<Form | null>(null),
+    [formError, setFormError] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [newProvider, setNewProvider] = useState<Provider>("github"),
+    [name, setName] = useState("");
+  const [isPublic, setPublic] = useState(false),
+    [remoteRepo, setRemoteRepo] = useState<RepoItem>();
+  const [uncertain, setUncertain] = useState(false);
+  const [folderPath, setFolderPath] = useState(""),
+    [folders, setFolders] = useState<FolderList | null>(null),
+    [browsing, setBrowsing] = useState(false);
+  const [optionIsolation, setOptionIsolation] = useState(isolation),
+    [optionProtocol, setOptionProtocol] = useState(protocol);
+  const lock = useRef(false),
+    syncLock = useRef(false),
+    request = useRef(0),
+    folderRequest = useRef(0);
+  const context = `${host.id}:${gitlabUrl}:${cloneDir}:${protocol}:${isolation}`;
+  const currentContext = useRef(context),
+    alive = useRef(true);
+  currentContext.current = context;
+  const isCurrent = (key: string) =>
+    alive.current && currentContext.current === key;
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedQuery(search);
-    }, 150);
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      request.current++;
+      folderRequest.current++;
+    };
+  }, []);
+  useEffect(() => {
+    lock.current = false;
+    syncLock.current = false;
+    request.current++;
+    folderRequest.current++;
+    setForm(null);
+    setBusy(null);
+    setRepos([]);
+    setAuth({});
+    setLoadError("");
+    setRowError(undefined);
+    setSyncing(false);
+  }, [context]);
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search), 150);
     return () => clearTimeout(timer);
   }, [search]);
-
-  // Load Repos and Auth status from cache
-  const loadRepos = useCallback(
-    async (forceRefresh = false) => {
-      if (forceRefresh) setLoading(true);
-      try {
-        const res = await listRepos({
-          provider,
-          query: debouncedQuery,
-          gitlabUrl,
-          cloneDir,
-          forceRefresh,
-        });
-        setRepos(res.repos);
-        setLastSyncedAt(res.lastSyncedAt);
-        setIsSyncing(Boolean(res.isSyncing));
-        if (res.auth) {
-          setAuthStatus(res.auth);
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        toast.error(`加载失败: ${msg}`);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [listRepos, provider, debouncedQuery, gitlabUrl, cloneDir, toast],
-  );
-
+  const load = useCallback(async () => {
+    if (!settings) return;
+    const id = ++request.current,
+      key = context;
+    setLoading(true);
+    try {
+      const result = await listRepos({ provider, query, gitlabUrl, cloneDir });
+      if (!isCurrent(key) || id !== request.current) return;
+      setRepos(result.repos);
+      setAuth(result.auth || {});
+      setSyncedAt(result.lastSyncedAt);
+      setSyncing(Boolean(result.isSyncing));
+      setLoadError((result.errors || []).join("\n"));
+    } catch (error) {
+      if (isCurrent(key) && id === request.current)
+        setLoadError(errorText(error));
+    } finally {
+      if (isCurrent(key) && id === request.current) setLoading(false);
+    }
+  }, [
+    listRepos,
+    provider,
+    query,
+    gitlabUrl,
+    cloneDir,
+    context,
+    Boolean(settings),
+  ]);
   useEffect(() => {
-    void loadRepos();
-  }, [loadRepos]);
+    void load();
+    return () => {
+      request.current++;
+    };
+  }, [load]);
+  useEffect(() => {
+    if (!syncing) return;
+    const timer = setInterval(() => {
+      void load();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [syncing, load]);
 
-  // Manual trigger sync
-  const handleManualSync = async () => {
-    setIsSyncing(true);
+  const manualSync = async () => {
+    if (syncLock.current || !settings) return;
+    syncLock.current = true;
+    setSyncing(true);
+    const key = context;
     try {
-      const res = await triggerSync({ gitlabUrl, cloneDir });
-      setLastSyncedAt(res.lastSyncedAt);
-      if (res.auth) {
-        setAuthStatus(res.auth);
+      await sync({});
+      if (isCurrent(key)) await load();
+    } catch (error) {
+      if (isCurrent(key)) setLoadError(errorText(error));
+    } finally {
+      if (isCurrent(key)) {
+        syncLock.current = false;
+        setSyncing(false);
       }
-      toast.show(`已同步 ${res.count} 个项目`, { variant: "success" });
-      await loadRepos();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`同步失败: ${msg}`);
-    } finally {
-      setIsSyncing(false);
     }
   };
-
-  // Handle Clone & Create Workspace
-  const handleCreateWorkspace = async (repo: RepoItem) => {
-    setActionLoadingId(repo.id);
-
-    try {
-      const cloneUrl = cloneProtocol === "ssh" ? repo.sshUrl : repo.httpUrl;
-      const res = await createWorkspace({
-        provider: repo.provider,
-        repoFullName: repo.fullName,
-        cloneUrl,
-        branch: repo.defaultBranch,
-        isolation: defaultIsolation,
-        gitlabUrl,
-        cloneDir,
-      });
-
-      toast.show(`已创建工作区: ${res.title}`, { variant: "success" });
-
-      setRepos((prev) =>
-        prev.map((r) => (r.id === repo.id ? { ...r, isLocal: true, localPath: res.localPath } : r)),
+  const openForm = (next: Form) => {
+    if (lock.current || !settings) return;
+    setForm(next);
+    setFormError("");
+    setName("");
+    setPublic(false);
+    setRemoteRepo(undefined);
+    setUncertain(false);
+    setFolderPath("");
+    setFolders(null);
+    folderRequest.current++;
+    setBrowsing(false);
+    setOptionIsolation(isolation);
+    setOptionProtocol(protocol);
+    setNewProvider(
+      auth.github?.loggedIn
+        ? "github"
+        : auth.gitlab?.loggedIn
+        ? "gitlab"
+        : "github"
+    );
+    if (next.kind === "new") {
+      const key = context;
+      void checkAuth({ forceRefresh: true })
+        .then((result) => {
+          if (isCurrent(key)) setAuth(result);
+        })
+        .catch((error) => {
+          if (isCurrent(key)) setFormError(errorText(error));
+        });
+    }
+  };
+  const createFromRepo = (
+    repo: RepoItem,
+    mode = isolation,
+    cloneProtocol = protocol
+  ) =>
+    createWorkspace({
+      provider: repo.provider,
+      repoFullName: repo.fullName,
+      cloneUrl: cloneProtocol === "ssh" ? repo.sshUrl : repo.httpUrl,
+      branch: repo.defaultBranch || undefined,
+      isolation: mode,
+      gitlabUrl,
+      cloneDir,
+    });
+  const finish = (
+    result: { workspaceId: string; localPath: string },
+    repo?: RepoItem
+  ) => {
+    if (repo)
+      setRepos((current) =>
+        current.map((item) =>
+          item.id === repo.id
+            ? { ...item, isLocal: true, localPath: result.localPath }
+            : item
+        )
       );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`创建失败: ${msg}`);
+    setForm(null);
+    if (navigation?.openWorkspace)
+      navigation.openWorkspace({ workspaceId: result.workspaceId });
+    else
+      toast.show("工作区已创建；更新 Paseo 客户端后可自动进入", {
+        variant: "success",
+      });
+  };
+  const quickCreate = async (repo: RepoItem) => {
+    if (lock.current || !settings) return;
+    lock.current = true;
+    setBusy(repo.id);
+    setRowError(undefined);
+    const key = context;
+    try {
+      const result = await createFromRepo(repo);
+      if (isCurrent(key)) finish(result, repo);
+    } catch (error) {
+      if (isCurrent(key)) setRowError({ id: repo.id, text: errorText(error) });
     } finally {
-      setActionLoadingId(null);
+      if (isCurrent(key)) {
+        lock.current = false;
+        setBusy(null);
+      }
     }
   };
-
+  const submitForm = async () => {
+    if (lock.current || !form || !settings) return;
+    lock.current = true;
+    setBusy(form.kind);
+    setFormError("");
+    const key = context;
+    try {
+      if (form.kind === "import") {
+        const result = await importFolder({ path: folderPath });
+        if (isCurrent(key)) finish(result);
+      } else if (form.kind === "options") {
+        const result = await createFromRepo(
+          form.repo,
+          optionIsolation,
+          optionProtocol
+        );
+        if (isCurrent(key)) finish(result, form.repo);
+      } else {
+        let repo = remoteRepo;
+        if (!repo) {
+          const result = await createRepository({
+            provider: newProvider,
+            name,
+            isPublic,
+          });
+          if (!isCurrent(key)) return;
+          repo = result.repo;
+          setRemoteRepo(repo);
+          setUncertain(result.uncertain);
+          if (result.uncertain) {
+            setFormError("已找到同名仓库，创建结果待确认。可使用该仓库继续。");
+            return;
+          }
+        }
+        const result = await createFromRepo(repo);
+        if (isCurrent(key)) {
+          finish(result, repo);
+          void load();
+        }
+      }
+    } catch (error) {
+      if (isCurrent(key)) setFormError(errorText(error));
+    } finally {
+      if (isCurrent(key)) {
+        lock.current = false;
+        setBusy(null);
+      }
+    }
+  };
+  const browse = async (path = folderPath || cloneDir) => {
+    if (lock.current) return;
+    const id = ++folderRequest.current,
+      key = context;
+    setBrowsing(true);
+    setFormError("");
+    try {
+      const result = await browseFolders({ path });
+      if (isCurrent(key) && id === folderRequest.current) setFolders(result);
+    } catch (error) {
+      if (isCurrent(key) && id === folderRequest.current)
+        setFormError(errorText(error));
+    } finally {
+      if (isCurrent(key) && id === folderRequest.current) setBrowsing(false);
+    }
+  };
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: theme.colors.surface0,
-          padding: layout.compact ? 12 : 20,
-          gap: 12,
+        screen: { flex: 1, backgroundColor: theme.colors.surface0 },
+        header: {
+          paddingHorizontal: compact ? 16 : 24,
+          paddingVertical: 20,
+          gap: 16,
+          borderBottomWidth: 1,
+          borderColor: theme.colors.border,
         },
-        headerRow: {
+        heading: {
           flexDirection: "row",
-          justifyContent: "space-between",
           alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
         },
         title: {
-          fontSize: layout.compact ? 18 : 20,
-          fontWeight: "bold",
           color: theme.colors.foreground,
-        },
-        syncRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 8,
-        },
-        syncInfo: {
-          fontSize: 12,
-          color: theme.colors.foregroundMuted,
-        },
-        syncButton: {
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
-          backgroundColor: theme.colors.surface2,
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 4,
-        },
-        syncButtonText: {
-          fontSize: 12,
-          color: theme.colors.foreground,
+          fontSize: 20,
           fontWeight: "500",
         },
-        authRow: {
+        actions: {
           flexDirection: "row",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+        },
+        button: {
+          minHeight: compact ? 40 : 36,
+          paddingHorizontal: 12,
+          borderRadius: 8,
+          backgroundColor: theme.colors.surface2,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+        },
+        ghost: { backgroundColor: "transparent" },
+        primary: { backgroundColor: theme.colors.accent },
+        buttonText: { color: theme.colors.foreground, fontSize: 13 },
+        primaryText: { color: theme.colors.accentForeground },
+        muted: { color: theme.colors.foregroundMuted, fontSize: 12 },
+        input: {
+          flex: 1,
+          minWidth: 0,
+          minHeight: 40,
+          paddingHorizontal: 12,
+          color: theme.colors.foreground,
+          backgroundColor: theme.colors.surface1,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 8,
+          fontSize: 14,
+        },
+        search: { flexDirection: "row", alignItems: "center", gap: 8 },
+        filters: {
+          flexDirection: "row",
+          justifyContent: "space-between",
           flexWrap: "wrap",
           gap: 8,
-          backgroundColor: theme.colors.surface1,
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          borderRadius: 8,
-          borderWidth: 1,
+        },
+        row: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: compact ? 8 : 12,
+          minHeight: 68,
+          paddingHorizontal: compact ? 16 : 24,
+          paddingVertical: 12,
+          borderBottomWidth: 1,
           borderColor: theme.colors.border,
         },
-        authBadge: {
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 4,
-        },
-        authText: {
-          fontSize: 12,
+        repoInfo: { flex: 1, minWidth: 0, gap: 4 },
+        name: {
           color: theme.colors.foreground,
-        },
-        searchBox: {
-          flexDirection: "row",
-          gap: 8,
-          alignItems: "center",
-        },
-        searchInput: {
-          flex: 1,
-          backgroundColor: theme.colors.surface1,
-          color: theme.colors.foreground,
-          paddingHorizontal: 12,
-          paddingVertical: layout.compact ? 8 : 10,
-          borderRadius: 8,
           fontSize: 14,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
+          fontWeight: "500",
+          flexShrink: 1,
         },
-        filterTabs: {
-          flexDirection: "row",
-          gap: 6,
-        },
-        filterTab: {
-          paddingHorizontal: 12,
-          paddingVertical: 6,
-          borderRadius: 6,
-          backgroundColor: theme.colors.surface1,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        },
-        filterTabActive: {
-          backgroundColor: theme.colors.accent,
-          borderColor: theme.colors.accent,
-        },
-        filterTabText: {
-          fontSize: 13,
+        status: {
           color: theme.colors.foregroundMuted,
-        },
-        filterTabTextActive: {
-          color: theme.colors.accentForeground,
-          fontWeight: "bold",
-        },
-        repoCard: {
-          backgroundColor: theme.colors.surface1,
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 8,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          gap: 6,
-        },
-        repoHeader: {
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        },
-        repoTitleRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 6,
-          flex: 1,
-        },
-        providerTag: {
-          paddingHorizontal: 6,
-          paddingVertical: 2,
+          fontSize: 11,
+          paddingHorizontal: 8,
+          paddingVertical: 3,
           borderRadius: 4,
           backgroundColor: theme.colors.surface2,
-          fontSize: 11,
-          fontWeight: "600",
-          color: theme.colors.foregroundMuted,
         },
-        repoName: {
-          fontSize: 14,
-          fontWeight: "600",
-          color: theme.colors.foreground,
-        },
-        repoDesc: {
-          fontSize: 12,
-          color: theme.colors.foregroundMuted,
-          lineHeight: 16,
-        },
-        repoFooter: {
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginTop: 2,
-        },
-        localTag: {
-          fontSize: 12,
+        local: {
           color: theme.colors.statusSuccess,
+          backgroundColor: /^#[\da-f]{6}$/i.test(theme.colors.statusSuccess)
+            ? `${theme.colors.statusSuccess}20`
+            : theme.colors.surface2,
         },
-        notLocalTag: {
+        footer: {
+          paddingHorizontal: compact ? 16 : 24,
+          paddingVertical: 12,
+          gap: 16,
+          flexDirection: "row",
+          flexWrap: "wrap",
+          borderTopWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        error: {
+          color: theme.colors.statusDanger,
           fontSize: 12,
-          color: theme.colors.foregroundMuted,
+          lineHeight: 18,
         },
-        actionButton: {
-          backgroundColor: theme.colors.accent,
-          paddingHorizontal: 12,
-          paddingVertical: 5,
-          borderRadius: 6,
+        empty: { padding: 32, alignItems: "center", gap: 12 },
+        field: { gap: 8 },
+        label: { color: theme.colors.foreground, fontSize: 13 },
+        form: { gap: 20 },
+        separator: { height: 1, backgroundColor: theme.colors.border },
+        folder: {
           flexDirection: "row",
           alignItems: "center",
-          gap: 4,
-        },
-        actionButtonText: {
-          color: theme.colors.accentForeground,
-          fontSize: 12,
-          fontWeight: "600",
-        },
-        emptyText: {
-          textAlign: "center",
-          color: theme.colors.foregroundMuted,
-          padding: 30,
-          fontSize: 13,
+          gap: 8,
+          padding: 12,
+          minHeight: 40,
         },
       }),
-    [theme, layout.compact],
+    [theme, compact]
   );
+  const button = (
+    label: string,
+    onPress: () => unknown,
+    options: {
+      icon?: string;
+      primary?: boolean;
+      disabled?: boolean;
+      accessibilityLabel?: string;
+      ghost?: boolean;
+    } = {}
+  ) => (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={options.accessibilityLabel || label}
+      accessibilityState={{ disabled: Boolean(options.disabled) }}
+      disabled={options.disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.button,
+        options.primary && styles.primary,
+        options.ghost && styles.ghost,
+        { opacity: options.disabled ? 0.4 : pressed ? 0.75 : 1 },
+      ]}
+    >
+      {options.icon ? (
+        <Icon
+          name={options.icon}
+          size={16}
+          color={
+            options.primary
+              ? theme.colors.accentForeground
+              : theme.colors.foregroundMuted
+          }
+        />
+      ) : null}
+      {label ? (
+        <Text
+          style={[styles.buttonText, options.primary && styles.primaryText]}
+        >
+          {label}
+        </Text>
+      ) : null}
+    </Pressable>
+  );
+  const visible = repos.filter(
+    (repo) =>
+      localFilter === "all" ||
+      (localFilter === "local" ? repo.isLocal : !repo.isLocal)
+  );
+  const formTitle =
+    form?.kind === "new"
+      ? "新建仓库"
+      : form?.kind === "import"
+      ? "导入本地文件夹"
+      : "创建工作区";
+  const newAuth = auth[newProvider];
+  const formLabel = busy
+    ? form?.kind === "import"
+      ? "导入中…"
+      : "创建中…"
+    : form?.kind === "import"
+    ? "导入并打开"
+    : form?.kind === "new" && remoteRepo
+    ? uncertain
+      ? "使用该仓库并打开"
+      : "重试克隆并打开"
+    : "创建并打开";
 
   return (
-    <View style={styles.container}>
-      {/* Title & Sync status */}
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Git 项目</Text>
-        <View style={styles.syncRow}>
-          <Text style={styles.syncInfo}>
-            {isSyncing ? "同步中..." : formatSyncTime(lastSyncedAt)}
-          </Text>
-          <Pressable
-            style={styles.syncButton}
-            disabled={isSyncing}
-            onPress={handleManualSync}
-          >
-            {isSyncing ? (
-              <ActivityIndicator size="small" color={theme.colors.foreground} />
-            ) : null}
-            <Text style={styles.syncButtonText}>同步</Text>
-          </Pressable>
+    <View
+      style={styles.screen}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+    >
+      <View style={styles.header}>
+        <View style={styles.heading}>
+          <Text style={styles.title}>{t("repos")}</Text>
+          <View style={styles.actions}>
+            {button(syncing ? "同步中" : "同步", manualSync, {
+              icon: "RefreshCw",
+              disabled: syncing || !settings,
+              ghost: true,
+            })}
+            {button(
+              compact ? "导入" : "导入本地文件夹",
+              () => openForm({ kind: "import" }),
+              {
+                icon: "FolderOpen",
+                disabled: !!busy || !settings,
+                accessibilityLabel: "导入本地文件夹",
+              }
+            )}
+            {button("新建仓库", () => openForm({ kind: "new" }), {
+              icon: "Plus",
+              primary: true,
+              disabled: !!busy || !settings,
+            })}
+          </View>
         </View>
-      </View>
-
-      {/* CLI Auth Status */}
-      <View style={styles.authRow}>
-        <View style={styles.authBadge}>
-          <Text style={styles.authText}>GitHub:</Text>
-          {authStatus.github?.loggedIn ? (
-            <Text style={[styles.authText, { color: theme.colors.statusSuccess }]}>
-              @{authStatus.github.user}
-            </Text>
-          ) : (
-            <Text style={[styles.authText, { color: theme.colors.statusDanger }]}>
-              未登录
-            </Text>
+        <View style={styles.search}>
+          <Icon name="Search" size={16} color={theme.colors.foregroundMuted} />
+          <TextInput
+            accessibilityLabel="搜索仓库"
+            placeholder="搜索仓库名称或描述"
+            placeholderTextColor={theme.colors.foregroundMuted}
+            style={styles.input}
+            value={search}
+            onChangeText={(value) => {
+              request.current++;
+              setSearch(value);
+            }}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={styles.filters}>
+          <View style={styles.actions}>
+            {(["all", "github", "gitlab"] as const).map((value) => (
+              <View key={value}>
+                {button(
+                  value === "all"
+                    ? "全部"
+                    : value === "github"
+                    ? "GitHub"
+                    : "GitLab",
+                  () => {
+                    request.current++;
+                    setProvider(value);
+                  },
+                  { ghost: provider !== value }
+                )}
+              </View>
+            ))}
+          </View>
+          {button(
+            localFilter === "all"
+              ? "全部状态"
+              : localFilter === "local"
+              ? "已在本地"
+              : "未克隆",
+            () =>
+              setLocalFilter(
+                localFilter === "all"
+                  ? "local"
+                  : localFilter === "local"
+                  ? "remote"
+                  : "all"
+              ),
+            { icon: "ListFilter", ghost: true }
           )}
         </View>
-
-        <View style={styles.authBadge}>
-          <Text style={styles.authText}>
-            GitLab ({authStatus.gitlab?.host || "gitlab.com"}):
-          </Text>
-          {authStatus.gitlab?.loggedIn ? (
-            <Text style={[styles.authText, { color: theme.colors.statusSuccess }]}>
-              @{authStatus.gitlab.user}
-            </Text>
-          ) : (
-            <Text style={[styles.authText, { color: theme.colors.statusDanger }]}>
-              未登录
-            </Text>
-          )}
-        </View>
+        {loadError ? (
+          <View style={styles.field}>
+            <Text style={styles.error}>{loadError}</Text>
+            {button("重试", manualSync, { ghost: true, disabled: syncing })}
+          </View>
+        ) : null}
+        {settingsState.status !== "ready" &&
+        settingsState.status !== "loading" ? (
+          <Text style={styles.error}>请先检查插件设置</Text>
+        ) : null}
       </View>
-
-      {/* Search and Filter */}
-      <View style={styles.searchBox}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="搜索项目..."
-          value={search}
-          onChangeText={setSearch}
-          placeholderTextColor={theme.colors.foregroundMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        <View style={styles.filterTabs}>
-          {(["all", "github", "gitlab"] as const).map((p) => (
-            <Pressable
-              key={p}
-              onPress={() => setProvider(p)}
-              style={[
-                styles.filterTab,
-                provider === p && styles.filterTabActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.filterTabText,
-                  provider === p && styles.filterTabTextActive,
-                ]}
-              >
-                {p === "all" ? "全部" : p === "github" ? "GitHub" : "GitLab"}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      {/* Repo list */}
       <ScrollView style={{ flex: 1 }}>
         {loading && repos.length === 0 ? (
-          <View style={{ padding: 30, alignItems: "center" }}>
-            <ActivityIndicator color={theme.colors.accent} size="small" />
+          <View style={styles.empty}>
+            <ActivityIndicator color={theme.colors.foregroundMuted} />
           </View>
-        ) : repos.length === 0 ? (
-          <Text style={styles.emptyText}>无匹配项目</Text>
+        ) : visible.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.muted}>
+              {search || localFilter !== "all" ? "没有匹配的仓库" : "暂无仓库"}
+            </Text>
+          </View>
         ) : (
-          repos.map((repo) => {
-            const isProcessing = actionLoadingId === repo.id;
-            return (
-              <View key={repo.id} style={styles.repoCard}>
-                <View style={styles.repoHeader}>
-                  <View style={styles.repoTitleRow}>
-                    <Text style={styles.providerTag}>
-                      {repo.provider === "github" ? "GitHub" : "GitLab"}
-                    </Text>
-                    <Text style={styles.repoName}>{repo.fullName}</Text>
-                    {repo.isPrivate && (
-                      <Text style={[styles.providerTag, { color: theme.colors.foregroundMuted }]}>
-                        私有
-                      </Text>
-                    )}
-                  </View>
-                </View>
-
-                {repo.description ? (
-                  <Text style={styles.repoDesc} numberOfLines={2}>
-                    {repo.description}
-                  </Text>
-                ) : null}
-
-                <View style={styles.repoFooter}>
-                  <View>
-                    {repo.isLocal ? (
-                      <Text style={styles.localTag}>已在本地</Text>
-                    ) : (
-                      <Text style={styles.notLocalTag}>未下载</Text>
-                    )}
-                  </View>
-
-                  <Pressable
-                    style={styles.actionButton}
-                    disabled={isProcessing}
-                    onPress={() => handleCreateWorkspace(repo)}
+          visible.map((repo) => (
+            <View key={repo.id}>
+              <View style={styles.row}>
+                <Icon
+                  icon={providerIcons[repo.provider] || "FolderGit2"}
+                  size={18}
+                  color={theme.colors.foregroundMuted}
+                />
+                <View style={styles.repoInfo}>
+                  <View
+                    style={[styles.actions, { flexWrap: "nowrap", gap: 6 }]}
                   >
-                    {isProcessing ? (
-                      <ActivityIndicator size="small" color={theme.colors.accentForeground} />
-                    ) : null}
-                    <Text style={styles.actionButtonText}>
-                      {isProcessing
-                        ? repo.isLocal
-                          ? "打开中..."
-                          : "克隆中..."
-                        : repo.isLocal
-                          ? "打开"
-                          : "Clone 并打开"}
+                    <Text numberOfLines={1} style={styles.name}>
+                      {repo.fullName}
                     </Text>
-                  </Pressable>
+                    {repo.isPrivate ? (
+                      <Icon
+                        name="LockKeyhole"
+                        size={12}
+                        color={theme.colors.foregroundMuted}
+                      />
+                    ) : null}
+                  </View>
+                  <Text numberOfLines={1} style={styles.muted}>
+                    {repo.description ||
+                      (repo.provider === "github" ? "GitHub" : "GitLab")}
+                  </Text>
                 </View>
+                <Text style={[styles.status, repo.isLocal && styles.local]}>
+                  {repo.isLocal ? "已在本地" : "未克隆"}
+                </Text>
+                {button(
+                  busy === repo.id
+                    ? "创建中…"
+                    : compact
+                    ? ""
+                    : repo.isLocal
+                    ? "创建工作区"
+                    : "克隆并创建",
+                  () => quickCreate(repo),
+                  {
+                    icon: compact ? "ArrowRight" : undefined,
+                    disabled: !!busy || !settings,
+                    accessibilityLabel: `${
+                      repo.isLocal ? "创建工作区" : "克隆并创建"
+                    } ${repo.fullName}`,
+                  }
+                )}
+                {button("", () => openForm({ kind: "options", repo }), {
+                  icon: "Ellipsis",
+                  ghost: true,
+                  disabled: !!busy || !settings,
+                  accessibilityLabel: `更多选项 ${repo.fullName}`,
+                })}
               </View>
-            );
-          })
+              {rowError?.id === repo.id ? (
+                <Text
+                  style={[
+                    styles.error,
+                    {
+                      paddingHorizontal: compact ? 16 : 24,
+                      paddingVertical: 8,
+                    },
+                  ]}
+                >
+                  {rowError.text}
+                </Text>
+              ) : null}
+            </View>
+          ))
         )}
       </ScrollView>
+      <View style={styles.footer}>
+        <Text style={styles.muted}>GitHub · {accountText(auth.github)}</Text>
+        <Text style={styles.muted}>GitLab · {accountText(auth.gitlab)}</Text>
+        {syncedAt ? (
+          <Text style={styles.muted}>
+            同步于{" "}
+            {new Date(syncedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </Text>
+        ) : null}
+      </View>
+      <Modal
+        title={formTitle}
+        open={!!form}
+        onOpenChange={(open) => {
+          if (!open && !lock.current) {
+            folderRequest.current++;
+            setForm(null);
+          }
+        }}
+      >
+        <Modal.Content>
+          <View style={styles.form}>
+            {form?.kind === "new" ? (
+              <>
+                <View style={styles.actions}>
+                  {(["github", "gitlab"] as const).map((value) => (
+                    <View key={value}>
+                      {button(
+                        value === "github" ? "GitHub" : "GitLab",
+                        () => {
+                          setNewProvider(value);
+                          setFormError("");
+                        },
+                        {
+                          ghost: newProvider !== value,
+                          disabled: !!busy || !!remoteRepo,
+                        }
+                      )}
+                    </View>
+                  ))}
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.label}>仓库名称</Text>
+                  <TextInput
+                    accessibilityLabel="仓库名称"
+                    style={[styles.input, { flex: 0 }]}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder="my-project"
+                    placeholderTextColor={theme.colors.foregroundMuted}
+                    editable={!busy && !remoteRepo}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <View style={styles.heading}>
+                  <Text style={styles.label}>公开仓库</Text>
+                  <Switch
+                    accessibilityLabel="公开仓库"
+                    value={isPublic}
+                    onValueChange={setPublic}
+                    disabled={!!busy || !!remoteRepo}
+                  />
+                </View>
+                {isPublic ? (
+                  <Text style={styles.muted}>任何人都可以查看该仓库</Text>
+                ) : null}
+                <Text style={styles.muted}>
+                  {newAuth?.loggedIn
+                    ? `使用已登录账户 ${newAuth.user ? `@${newAuth.user}` : ""}`
+                    : accountText(newAuth)}
+                </Text>
+              </>
+            ) : form?.kind === "import" ? (
+              <>
+                <View style={styles.field}>
+                  <Text style={styles.label}>文件夹</Text>
+                  <View style={styles.search}>
+                    <TextInput
+                      accessibilityLabel="文件夹路径"
+                      placeholder="选择或输入文件夹路径"
+                      placeholderTextColor={theme.colors.foregroundMuted}
+                      style={styles.input}
+                      value={folderPath}
+                      onChangeText={setFolderPath}
+                      editable={!busy}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    {button(browsing ? "加载中" : "浏览", () => browse(), {
+                      icon: "FolderOpen",
+                      disabled: !!busy || browsing,
+                    })}
+                  </View>
+                </View>
+                {folders ? (
+                  <View style={styles.field}>
+                    <Text style={styles.muted}>{folders.path}</Text>
+                    {folders.path !== folders.parent
+                      ? button("上级目录", () => browse(folders.parent), {
+                          icon: "ArrowUp",
+                          ghost: true,
+                          disabled: browsing,
+                        })
+                      : null}
+                    <ScrollView style={{ maxHeight: 240 }}>
+                      {folders.directories.map((folder) => (
+                        <Pressable
+                          key={folder.path}
+                          accessibilityRole="button"
+                          accessibilityLabel={`进入 ${folder.name}`}
+                          disabled={browsing}
+                          onPress={() => browse(folder.path)}
+                          style={styles.folder}
+                        >
+                          <Icon
+                            name="Folder"
+                            size={16}
+                            color={theme.colors.foregroundMuted}
+                          />
+                          <Text numberOfLines={1} style={styles.name}>
+                            {folder.name}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                    {button(
+                      "选择此文件夹",
+                      () => {
+                        setFolderPath(folders.path);
+                        setFolders(null);
+                      },
+                      { disabled: browsing }
+                    )}
+                  </View>
+                ) : null}
+              </>
+            ) : form?.kind === "options" ? (
+              <>
+                <Text style={styles.name}>{form.repo.fullName}</Text>
+                <Text style={styles.muted}>{form.repo.localPath}</Text>
+                <Text style={styles.muted}>
+                  起始分支 · {form.repo.defaultBranch || "默认分支"}
+                </Text>
+                <SettingsSelect<"local" | "worktree">
+                  label="工作区类型"
+                  value={optionIsolation}
+                  onValueChange={setOptionIsolation}
+                  options={[
+                    { label: "Worktree", value: "worktree" },
+                    { label: "Local", value: "local" },
+                  ]}
+                  disabled={!!busy}
+                />
+                <SettingsSelect<"ssh" | "https">
+                  label="克隆协议"
+                  value={optionProtocol}
+                  onValueChange={setOptionProtocol}
+                  options={[
+                    { label: "SSH", value: "ssh" },
+                    { label: "HTTPS", value: "https" },
+                  ]}
+                  disabled={!!busy}
+                />
+              </>
+            ) : null}
+            {formError ? <Text style={styles.error}>{formError}</Text> : null}
+            <View style={[styles.actions, { justifyContent: "flex-end" }]}>
+              {button(
+                "取消",
+                () => {
+                  folderRequest.current++;
+                  setForm(null);
+                },
+                { disabled: !!busy, ghost: true }
+              )}
+              {button(formLabel, submitForm, {
+                primary: true,
+                disabled:
+                  !!busy ||
+                  browsing ||
+                  (form?.kind === "new" &&
+                    !remoteRepo &&
+                    (!name.trim() || !newAuth?.loggedIn)) ||
+                  (form?.kind === "import" && !folderPath.trim()),
+              })}
+            </View>
+          </View>
+        </Modal.Content>
+      </Modal>
     </View>
   );
 }

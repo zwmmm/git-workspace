@@ -55,7 +55,9 @@ export const ListReposRpc = defineRpc({
     repos: z.array(RepoItemSchema),
     lastSyncedAt: z.number().optional(),
     isSyncing: z.boolean().optional(),
-    syncedAt: z.object({ github: z.number().optional(), gitlab: z.number().optional() }).optional(),
+    syncedAt: z
+      .object({ github: z.number().optional(), gitlab: z.number().optional() })
+      .optional(),
     auth: z
       .object({
         github: AuthStatusSchema,
@@ -104,14 +106,22 @@ export const CreateWorkspaceRpc = defineRpc({
 
 export const CreateRepositoryRpc = defineRpc({
   name: "git.create-repository",
-  input: z.object({ provider: z.enum(["github", "gitlab"]), name: z.string().trim().min(1), isPublic: z.boolean().default(false) }),
+  input: z.object({
+    provider: z.enum(["github", "gitlab"]),
+    name: z.string().trim().min(1),
+    isPublic: z.boolean().default(false),
+  }),
   output: z.object({ repo: RepoItemSchema, uncertain: z.boolean() }),
 });
 
 export const BrowseFoldersRpc = defineRpc({
   name: "git.browse-folders",
   input: z.object({ path: z.string().optional() }),
-  output: z.object({ path: z.string(), parent: z.string(), directories: z.array(z.object({ name: z.string(), path: z.string() })) }),
+  output: z.object({
+    path: z.string(),
+    parent: z.string(),
+    directories: z.array(z.object({ name: z.string(), path: z.string() })),
+  }),
 });
 
 export const ImportFolderRpc = defineRpc({
