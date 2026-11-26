@@ -2,6 +2,12 @@
   "id": "git-workspace",
   "name": "Git workspace",
   "description": "Browse, create, clone, and import repositories into Paseo workspaces",
+  "translations": {
+    "zh-CN": {
+      "name": "Git 工作区",
+      "description": "在 Paseo 浏览、创建、克隆和导入仓库，管理工作区。"
+    }
+  },
   "icon": "assets/icon.png",
   "media": [
     "assets/git-workspace-repositories.png",

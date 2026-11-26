@@ -39,7 +39,7 @@ export default function contribute(client: PluginClientContext) {
   // 3. 注册设置界面
   const removeSettings = client.addSettingsScreen({
     id: "git-workspace-settings",
-    title: "Git 仓库与 GitLab 设置",
+    title: messages.message("settings.title"),
     icon: "FolderGit2",
     Component: GitWorkspaceSettings,
   });

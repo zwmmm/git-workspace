@@ -1,34 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Text, View, StyleSheet } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { useSettings, useTranslation, type SettingsState } from "@getpaseo/plugin/client";
 import {
-  useSettings,
-  type PluginSurfaceProps,
-  type SettingsState,
-} from "@getpaseo/plugin/client";
-import {
+  SettingsAction,
   SettingsCard,
   SettingsInput,
+  SettingsRow,
   SettingsSection,
   SettingsSelect,
-  SettingsAction,
 } from "@getpaseo/plugin/client/ui";
 import { gitWorkspaceSettings } from "../shared/settings";
+import { messages } from "./messages";
 
-type ReadySettings = Extract<
+type EditorSettings = Extract<
   SettingsState<typeof gitWorkspaceSettings.schema>,
-  { status: "ready" }
+  { status: "ready" | "loading" }
 >;
 
 const AUTOSAVE_DELAY_MS = 600;
 
-function SettingsEditor({
-  settings,
-  theme,
-}: {
-  settings: ReadySettings;
-  theme: PluginSurfaceProps["theme"];
-}) {
-  const [draft, setDraft] = useState(() => settings.values);
+function SettingsEditor({ settings }: { settings: EditorSettings }) {
+  const { t } = useTranslation(messages);
+  const [draft, setDraft] = useState(() =>
+    settings.status === "ready" ? settings.values : gitWorkspaceSettings.schema.parse({}),
+  );
 
   const changeGitlabUrl = useCallback(
     (gitlabUrl: string) => setDraft((current) => ({ ...current, gitlabUrl })),
@@ -41,153 +35,111 @@ function SettingsEditor({
   );
 
   const changeCloneProtocol = useCallback(
-    (cloneProtocol: "ssh" | "https") => setDraft((current) => ({ ...current, cloneProtocol })),
+    (cloneProtocol: "" | "ssh" | "https") => {
+      if (cloneProtocol) setDraft((current) => ({ ...current, cloneProtocol }));
+    },
     [],
   );
 
   const changeDefaultIsolation = useCallback(
-    (defaultIsolation: "worktree" | "local") => setDraft((current) => ({ ...current, defaultIsolation })),
+    (defaultIsolation: "" | "worktree" | "local") => {
+      if (defaultIsolation) setDraft((current) => ({ ...current, defaultIsolation }));
+    },
     [],
   );
 
-  const dirty =
+  const dirty = settings.status === "ready" && (
     draft.gitlabUrl !== settings.values.gitlabUrl ||
     draft.cloneDir !== settings.values.cloneDir ||
     draft.cloneProtocol !== settings.values.cloneProtocol ||
-    draft.defaultIsolation !== settings.values.defaultIsolation;
+    draft.defaultIsolation !== settings.values.defaultIsolation
+  );
 
   useEffect(() => {
-    if (!dirty || settings.saving || settings.saveError) return;
+    if (settings.status !== "ready" || !dirty || settings.saving || settings.saveError) return;
     const timer = setTimeout(() => {
       void settings.save(draft, settings.revision);
     }, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [dirty, settings, draft]);
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: {
-          padding: 16,
-          gap: 16,
-        },
-        savingText: {
-          fontSize: 12,
-          color: theme.colors.accent,
-          marginTop: 8,
-        },
-        errorText: {
-          fontSize: 12,
-          color: theme.colors.statusDanger,
-          marginTop: 8,
-        },
-      }),
-    [theme],
-  );
+  const loading = settings.status === "loading";
+  const disabled = loading || settings.saving;
+  const loadingOption = [{ label: t("settings.loading"), value: "" as const }];
 
   return (
-    <View style={styles.container}>
+    <>
       <SettingsSection title="GitLab">
         <SettingsCard>
           <SettingsInput
-            label="GitLab URL"
-            hint="实例域名，如 https://gitlab.com 或私有域名"
-            initialValue={draft.gitlabUrl}
+            label={t("settings.gitLabUrl")}
+            hint={t("settings.gitLabHint")}
+            initialValue={loading ? undefined : draft.gitlabUrl}
             onChangeText={changeGitlabUrl}
-            placeholder="https://gitlab.com"
-            disabled={settings.saving}
+            placeholder={loading ? t("settings.loading") : "https://gitlab.com"}
+            disabled={disabled}
           />
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="本地路径与克隆">
+      <SettingsSection title={t("settings.local")}>
         <SettingsCard>
           <SettingsInput
-            label="本地代码目录"
-            hint="仓库存储根路径"
-            initialValue={draft.cloneDir}
+            label={t("settings.cloneDir")}
+            hint={t("settings.cloneDirHint")}
+            initialValue={loading ? undefined : draft.cloneDir}
             onChangeText={changeCloneDir}
-            placeholder="~/Projects"
-            disabled={settings.saving}
+            placeholder={loading ? t("settings.loading") : "~/Projects"}
+            disabled={disabled}
           />
-
-          <SettingsSelect<"ssh" | "https">
-            label="克隆协议"
-            value={draft.cloneProtocol}
-            options={[
+          <SettingsSelect
+            label={t("settings.cloneProtocol")}
+            value={loading ? "" : draft.cloneProtocol}
+            options={loading ? loadingOption : [
               { label: "SSH (git@...)", value: "ssh" },
               { label: "HTTPS", value: "https" },
             ]}
             onValueChange={changeCloneProtocol}
-            disabled={settings.saving}
+            disabled={disabled}
           />
-
-          <SettingsSelect<"worktree" | "local">
-            label="工作区类型"
-            value={draft.defaultIsolation}
-            options={[
-              { label: "Worktree (推荐)", value: "worktree" },
-              { label: "Local 目录", value: "local" },
+          <SettingsSelect
+            label={t("settings.workspaceType")}
+            value={loading ? "" : draft.defaultIsolation}
+            options={loading ? loadingOption : [
+              { label: t("settings.worktree"), value: "worktree" },
+              { label: t("settings.localDirectory"), value: "local" },
             ]}
             onValueChange={changeDefaultIsolation}
-            disabled={settings.saving}
+            disabled={disabled}
           />
+          {settings.saveError ? (
+            <SettingsRow label={t("settings.title")} error={t("settings.saveFailed")} />
+          ) : settings.saving ? (
+            <SettingsRow label={t("settings.saving")} />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
-
-      {settings.saving ? (
-        <Text style={styles.savingText}>正在保存...</Text>
-      ) : null}
-      {settings.saveError ? (
-        <Text style={styles.errorText}>保存失败: {settings.saveError}</Text>
-      ) : null}
-    </View>
+    </>
   );
 }
 
-export function GitWorkspaceSettings({ theme }: PluginSurfaceProps) {
+export function GitWorkspaceSettings() {
   const settings = useSettings(gitWorkspaceSettings);
-
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        screen: {
-          flex: 1,
-          backgroundColor: theme.colors.surface0,
-          padding: 16,
-        },
-        infoText: {
-          color: theme.colors.foregroundMuted,
-          fontSize: 14,
-        },
-        errorText: {
-          color: theme.colors.statusDanger,
-          fontSize: 14,
-        },
-      }),
-    [theme],
-  );
-
-  if (settings.status === "loading") {
-    return (
-      <View style={styles.screen}>
-        <Text style={styles.infoText}>加载中...</Text>
-      </View>
-    );
+  const { t } = useTranslation(messages);
+  if (settings.status === "ready" || settings.status === "loading") {
+    return <SettingsEditor key={settings.status} settings={settings} />;
   }
 
-  if (settings.status !== "ready") {
-    return (
-      <View style={styles.screen}>
-        <Text style={styles.errorText}>加载失败: {settings.error}</Text>
+  return (
+    <SettingsSection title={t("settings.title")}>
+      <SettingsCard>
         <SettingsAction
-          label="重试"
-          actionLabel="重新加载"
+          label={t("settings.title")}
+          actionLabel={t("settings.retry")}
+          error={t("settings.loadFailed")}
           onPress={settings.reload}
         />
-      </View>
-    );
-  }
-
-  return <SettingsEditor settings={settings} theme={theme} />;
+      </SettingsCard>
+    </SettingsSection>
+  );
 }
